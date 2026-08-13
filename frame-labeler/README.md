@@ -61,15 +61,18 @@ Boxes copied from the preceding frame use a dashed outline and remain drafts unt
 
 ## Inference providers
 
-Model integrations implement the `InferenceProvider` protocol in `frame_labeler.inference`.
-A provider receives a PIL image, source-frame metadata, and the project class catalog, then
-returns source-pixel `Detection` values. The core validates and clips detections and records the
-provider identifier and optional confidence with each inferred box.
+Model integrations implement the generic `InferenceProvider` protocol in
+`frame_labeler.inference`. A provider declares a versioned output type, receives a PIL image,
+source-frame metadata, and the project class catalog, then returns its typed predictions.
+`run_inference()` does not assume a labeling domain, allowing detection, classification,
+segmentation, and other outputs to use the same execution boundary.
 
-`suggest_boxes()` converts provider output into annotation boxes. Pass those boxes to
-`AnnotationProject.seed_inferred_boxes()` to seed an empty unreviewed frame. This method never
-overwrites existing boxes or an intentionally empty draft or reviewed frame. Concrete model
-runtimes and GUI scheduling remain separate from the core package.
+Object detection currently provides the first domain adapter. `detections_to_boxes()` validates
+and clips source-pixel detections into editable boxes while retaining the provider identifier and
+optional confidence. Pass those boxes to `AnnotationProject.seed_inferred_boxes()` to seed an
+empty unreviewed frame. This method never overwrites existing boxes or an intentionally empty
+draft or reviewed frame. Concrete model runtimes, result caching, and GUI scheduling remain
+separate from the core package.
 
 ## Export
 

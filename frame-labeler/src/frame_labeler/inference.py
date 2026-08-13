@@ -4,7 +4,7 @@ import math
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Generic, Protocol, TypeVar
 
 from PIL import Image
 
@@ -14,6 +14,10 @@ from frame_labeler.media import MediaFrame
 
 class InferenceError(RuntimeError):
     pass
+
+
+PredictionT_co = TypeVar("PredictionT_co", covariant=True)
+OBJECT_DETECTION_OUTPUT = "object-detection/v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,20 +51,38 @@ class Detection:
             raise ValueError("Detection confidence must be between zero and one")
 
 
-class InferenceProvider(Protocol):
+@dataclass(frozen=True, slots=True)
+class InferenceResult(Generic[PredictionT_co]):
     provider_id: str
+    output_type: str
+    frame_index: int
+    timestamp_seconds: float
+    frame_size: tuple[int, int]
+    class_names: tuple[str, ...]
+    predictions: tuple[PredictionT_co, ...]
 
-    def predict(self, request: InferenceRequest) -> Sequence[Detection]: ...
+
+class InferenceProvider(Protocol[PredictionT_co]):
+    provider_id: str
+    output_type: str
+
+    def predict(self, request: InferenceRequest) -> Sequence[PredictionT_co]: ...
 
 
-def suggest_boxes(
-    provider: InferenceProvider,
+def _validated_identifier(value: str, label: str) -> str:
+    cleaned = value.strip()
+    if not cleaned or "\n" in cleaned or "\r" in cleaned:
+        raise InferenceError(f"{label} must be a non-empty, single-line identifier")
+    return cleaned
+
+
+def run_inference(
+    provider: InferenceProvider[PredictionT_co],
     frame: MediaFrame,
     class_names: Sequence[str],
-) -> tuple[Box, ...]:
-    provider_id = provider.provider_id.strip()
-    if not provider_id or "\n" in provider_id or "\r" in provider_id:
-        raise InferenceError("Inference provider must have a non-empty, single-line identifier")
+) -> InferenceResult[PredictionT_co]:
+    provider_id = _validated_identifier(provider.provider_id, "Inference provider")
+    output_type = _validated_identifier(provider.output_type, "Inference output type")
     classes = tuple(class_names)
     request = InferenceRequest(
         frame_index=frame.index,
@@ -69,12 +91,38 @@ def suggest_boxes(
         class_names=classes,
     )
     try:
-        detections = tuple(provider.predict(request))
+        predictions = tuple(provider.predict(request))
     except Exception as error:
         raise InferenceError(f"Inference provider {provider_id!r} failed") from error
 
+    return InferenceResult(
+        provider_id=provider_id,
+        output_type=output_type,
+        frame_index=frame.index,
+        timestamp_seconds=frame.timestamp_seconds,
+        frame_size=(frame.width, frame.height),
+        class_names=classes,
+        predictions=predictions,
+    )
+
+
+def detections_to_boxes(
+    result: InferenceResult[Detection],
+    frame: MediaFrame,
+    class_names: Sequence[str],
+) -> tuple[Box, ...]:
+    if result.output_type != OBJECT_DETECTION_OUTPUT:
+        raise InferenceError(
+            f"Inference output {result.output_type!r} cannot be materialized as detection boxes"
+        )
+    if result.frame_index != frame.index or result.frame_size != (frame.width, frame.height):
+        raise InferenceError("Inference result does not match the source frame")
+    classes = tuple(class_names)
+    if result.class_names != classes:
+        raise InferenceError("Inference result does not match the project class catalog")
+
     boxes: list[Box] = []
-    for index, detection in enumerate(detections):
+    for index, detection in enumerate(result.predictions):
         if detection.class_id >= len(classes):
             raise InferenceError(
                 f"Detection {index} returned unknown class ID {detection.class_id}"
@@ -94,7 +142,7 @@ def suggest_boxes(
                 x_max=x_max,
                 y_max=y_max,
                 origin=BoxOrigin.INFERRED,
-                inference_provider=provider_id,
+                inference_provider=result.provider_id,
                 confidence=detection.confidence,
             )
         )
