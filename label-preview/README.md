@@ -1,14 +1,12 @@
 # Label Preview
 
 `label-preview` is a small Go CLI that renders an image from a labeled dataset as a terminal
-image with class-colored bounding boxes. It is meant for quick dataset spot checks and novelty
+image with labeled bounding boxes. It is meant for quick dataset spot checks and novelty
 previews, not precise annotation review. The compiled executable is self-contained and does not
 require a Go runtime on the target machine.
 
-The renderer uses Unicode half blocks so each terminal row carries two vertical image samples.
-This keeps the result close to the source aspect ratio on terminals whose character cells are
-roughly twice as tall as they are wide. ANSI truecolor is used when supported, with a monochrome
-fallback for redirected output, `NO_COLOR`, or `--color never`.
+The renderer uses a short grayscale character ramp and accounts for terminal cells being roughly
+twice as tall as they are wide. Output is always plain text and contains no ANSI color sequences.
 
 ## Setup
 
@@ -41,13 +39,12 @@ The tool deliberately has no annotation-path or format flags. An image outside a
 layout is rejected rather than guessed. In a recognized YOLO dataset, a missing label file is a
 valid empty sample. Unknown numeric class IDs use the ID as their label.
 
-Useful sizing and output controls:
+Useful sizing controls:
 
 ```shell
 ./bin/label-preview /path/to/dataset/images/train/example.jpg \
   --width 64 \
-  --max-height 24 \
-  --color always
+  --max-height 24
 ```
 
 YOLO detection rows use the usual normalized representation:

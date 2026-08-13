@@ -10,7 +10,6 @@ import (
 	"github.com/rellimrebo/toolbox/label-preview/internal/dataset"
 )
 
-const reset = "\x1b[0m"
 const maxPreviewDimension = 4096
 const maxPreviewCells = 1_000_000
 
@@ -20,25 +19,6 @@ type rgb struct {
 	red   uint8
 	green uint8
 	blue  uint8
-}
-
-type cell struct {
-	glyph         rune
-	foreground    rgb
-	background    rgb
-	hasForeground bool
-	hasBackground bool
-}
-
-var palette = []rgb{
-	{255, 99, 132},
-	{54, 162, 235},
-	{255, 206, 86},
-	{75, 192, 192},
-	{153, 102, 255},
-	{255, 159, 64},
-	{136, 216, 176},
-	{238, 130, 238},
 }
 
 func FitTerminalSize(imageWidth int, imageHeight int, maxWidth int, maxHeight int) (int, int, error) {
@@ -148,25 +128,15 @@ func monochromeGlyph(upper rgb, lower rgb) rune {
 	return luminanceRamp[index]
 }
 
-func imageCells(source image.Image, columns int, rows int, useColor bool) [][]cell {
+func imageCells(source image.Image, columns int, rows int) [][]rune {
 	pixels := resize(source, columns, rows*2)
-	canvas := make([][]cell, rows)
+	canvas := make([][]rune, rows)
 	for row := range rows {
-		canvas[row] = make([]cell, columns)
+		canvas[row] = make([]rune, columns)
 		for column := range columns {
 			upper := pixels[row*2*columns+column]
 			lower := pixels[(row*2+1)*columns+column]
-			if useColor {
-				canvas[row][column] = cell{
-					glyph:         '▀',
-					foreground:    upper,
-					background:    lower,
-					hasForeground: true,
-					hasBackground: true,
-				}
-			} else {
-				canvas[row][column] = cell{glyph: monochromeGlyph(upper, lower)}
-			}
+			canvas[row][column] = monochromeGlyph(upper, lower)
 		}
 	}
 	return canvas
@@ -178,97 +148,41 @@ func boxExtent(start float64, end float64, size int) (int, int) {
 	return first, last
 }
 
-func paint(target *cell, glyph rune, foreground rgb, label bool) {
-	target.glyph = glyph
-	target.foreground = foreground
-	target.hasForeground = true
-	if label {
-		target.background = rgb{}
-		target.hasBackground = true
-	}
-}
-
-func drawBox(canvas [][]cell, box dataset.Box) {
+func drawBox(canvas [][]rune, box dataset.Box) {
 	rows, columns := len(canvas), len(canvas[0])
 	left, right := boxExtent(box.XMin, box.XMax, columns)
 	top, bottom := boxExtent(box.YMin, box.YMax, rows)
-	boxColor := palette[box.ClassID%len(palette)]
 
 	if left == right {
 		for row := top; row <= bottom; row++ {
-			paint(&canvas[row][left], '│', boxColor, false)
+			canvas[row][left] = '│'
 		}
 		return
 	}
 	if top == bottom {
 		for column := left; column <= right; column++ {
-			paint(&canvas[top][column], '─', boxColor, false)
+			canvas[top][column] = '─'
 		}
 		return
 	}
 
 	for column := left + 1; column < right; column++ {
-		paint(&canvas[top][column], '─', boxColor, false)
-		paint(&canvas[bottom][column], '─', boxColor, false)
+		canvas[top][column] = '─'
+		canvas[bottom][column] = '─'
 	}
 	for row := top + 1; row < bottom; row++ {
-		paint(&canvas[row][left], '│', boxColor, false)
-		paint(&canvas[row][right], '│', boxColor, false)
+		canvas[row][left] = '│'
+		canvas[row][right] = '│'
 	}
-	paint(&canvas[top][left], '┌', boxColor, false)
-	paint(&canvas[top][right], '┐', boxColor, false)
-	paint(&canvas[bottom][left], '└', boxColor, false)
-	paint(&canvas[bottom][right], '┘', boxColor, false)
+	canvas[top][left] = '┌'
+	canvas[top][right] = '┐'
+	canvas[bottom][left] = '└'
+	canvas[bottom][right] = '┘'
 
 	label := []rune(box.Label)
 	for offset := 1; offset < right-left && offset <= len(label); offset++ {
-		paint(&canvas[top][left+offset], label[offset-1], boxColor, true)
+		canvas[top][left+offset] = label[offset-1]
 	}
-}
-
-func ansiRow(cells []cell) string {
-	var output strings.Builder
-	var activeForeground rgb
-	var activeBackground rgb
-	hasActiveForeground, hasActiveBackground := false, false
-	for _, current := range cells {
-		if current.hasForeground != hasActiveForeground ||
-			(current.hasForeground && current.foreground != activeForeground) {
-			if current.hasForeground {
-				fmt.Fprintf(
-					&output,
-					"\x1b[38;2;%d;%d;%dm",
-					current.foreground.red,
-					current.foreground.green,
-					current.foreground.blue,
-				)
-			} else {
-				output.WriteString(reset)
-				hasActiveBackground = false
-			}
-			activeForeground = current.foreground
-			hasActiveForeground = current.hasForeground
-		}
-		if current.hasBackground != hasActiveBackground ||
-			(current.hasBackground && current.background != activeBackground) {
-			if current.hasBackground {
-				fmt.Fprintf(
-					&output,
-					"\x1b[48;2;%d;%d;%dm",
-					current.background.red,
-					current.background.green,
-					current.background.blue,
-				)
-			} else {
-				output.WriteString("\x1b[49m")
-			}
-			activeBackground = current.background
-			hasActiveBackground = current.hasBackground
-		}
-		output.WriteRune(current.glyph)
-	}
-	output.WriteString(reset)
-	return output.String()
 }
 
 func Render(
@@ -276,14 +190,13 @@ func Render(
 	boxes []dataset.Box,
 	width int,
 	maxHeight int,
-	useColor bool,
 ) (string, error) {
 	bounds := source.Bounds()
 	columns, rows, err := FitTerminalSize(bounds.Dx(), bounds.Dy(), width, maxHeight)
 	if err != nil {
 		return "", err
 	}
-	canvas := imageCells(source, columns, rows, useColor)
+	canvas := imageCells(source, columns, rows)
 	for _, box := range boxes {
 		drawBox(canvas, box)
 	}
@@ -292,12 +205,8 @@ func Render(
 	fmt.Fprintf(&output, "┌%s┐\n", strings.Repeat("─", columns))
 	for _, row := range canvas {
 		output.WriteRune('│')
-		if useColor {
-			output.WriteString(ansiRow(row))
-		} else {
-			for _, current := range row {
-				output.WriteRune(current.glyph)
-			}
+		for _, current := range row {
+			output.WriteRune(current)
 		}
 		output.WriteString("│\n")
 	}

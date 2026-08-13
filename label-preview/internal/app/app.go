@@ -28,7 +28,6 @@ Dataset formats are detected from their standard layout:
 Options:
   --width CELLS       maximum image width (default: available terminal width)
   --max-height ROWS   maximum image height (default: available terminal height)
-  --color MODE        auto, always, or never (default: auto)
   -h, --help          show this help
 `
 
@@ -36,7 +35,6 @@ type options struct {
 	imagePath string
 	width     int
 	maxHeight int
-	color     string
 }
 
 func optionValue(arguments []string, index *int, name string) (string, error) {
@@ -63,7 +61,7 @@ func positiveInteger(value string, name string) (int, error) {
 }
 
 func parseArguments(arguments []string) (options, bool, error) {
-	result := options{color: "auto"}
+	result := options{}
 	for index := 0; index < len(arguments); index++ {
 		argument := arguments[index]
 		switch {
@@ -87,15 +85,6 @@ func parseArguments(arguments []string) (options, bool, error) {
 			if err != nil {
 				return result, false, err
 			}
-		case argument == "--color" || strings.HasPrefix(argument, "--color="):
-			value, err := optionValue(arguments, &index, "--color")
-			if err != nil {
-				return result, false, err
-			}
-			if value != "auto" && value != "always" && value != "never" {
-				return result, false, errors.New("--color must be auto, always, or never")
-			}
-			result.color = value
 		case strings.HasPrefix(argument, "-"):
 			return result, false, fmt.Errorf("unknown option: %s", argument)
 		case result.imagePath == "":
@@ -121,18 +110,6 @@ func terminalSize(output io.Writer) (int, int) {
 		}
 	}
 	return 80, 24
-}
-
-func useColor(mode string, output io.Writer) bool {
-	if mode == "always" {
-		return true
-	}
-	_, noColor := os.LookupEnv("NO_COLOR")
-	if mode == "never" || noColor || os.Getenv("TERM") == "dumb" {
-		return false
-	}
-	descriptor, ok := output.(fileDescriptor)
-	return ok && term.IsTerminal(int(descriptor.Fd()))
 }
 
 func run(arguments []string, output io.Writer) error {
@@ -172,7 +149,6 @@ func run(arguments []string, output io.Writer) error {
 		annotations.Boxes,
 		options.width,
 		options.maxHeight,
-		useColor(options.color, output),
 	)
 	if err != nil {
 		return err

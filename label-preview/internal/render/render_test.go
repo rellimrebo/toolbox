@@ -53,7 +53,7 @@ func TestMonochromePreviewDrawsNamedBox(t *testing.T) {
 	}
 	box := dataset.Box{ClassID: 0, Label: "dog", XMin: 0.125, YMin: 0.25, XMax: 0.875, YMax: 0.75}
 
-	preview, err := Render(source, []dataset.Box{box}, 16, 8, false)
+	preview, err := Render(source, []dataset.Box{box}, 16, 8)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,28 +70,5 @@ func TestMonochromePreviewDrawsNamedBox(t *testing.T) {
 		if !strings.Contains(preview, expected) {
 			t.Fatalf("preview does not contain %q:\n%s", expected, preview)
 		}
-	}
-}
-
-func TestTruecolorPreviewEmitsForegroundAndBackground(t *testing.T) {
-	source := image.NewRGBA(image.Rect(0, 0, 2, 2))
-	for y := range 2 {
-		for x := range 2 {
-			source.Set(x, y, color.RGBA{R: 12, G: 34, B: 56, A: 255})
-		}
-	}
-
-	preview, err := Render(source, nil, 2, 1, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(preview, "\x1b[38;2;12;34;56m") {
-		t.Fatalf("preview has no expected foreground color: %q", preview)
-	}
-	if !strings.Contains(preview, "\x1b[48;2;12;34;56m") {
-		t.Fatalf("preview has no expected background color: %q", preview)
-	}
-	if !strings.HasSuffix(preview, "└──┘") {
-		t.Fatalf("preview has unexpected ending: %q", preview)
 	}
 }

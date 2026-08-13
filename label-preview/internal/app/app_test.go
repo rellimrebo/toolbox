@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func TestCLIRendersYOLOSampleWithoutColor(t *testing.T) {
+func TestCLIRendersPlainYOLOSample(t *testing.T) {
 	root := t.TempDir()
 	imagePath := filepath.Join(root, "images", "train", "dog.png")
 	if err := os.MkdirAll(filepath.Dir(imagePath), 0o755); err != nil {
@@ -50,7 +50,6 @@ func TestCLIRendersYOLOSampleWithoutColor(t *testing.T) {
 		imagePath,
 		"--width", "20",
 		"--max-height", "10",
-		"--color", "never",
 	}, &stdout, &stderr)
 
 	if exitCode != 0 {
@@ -61,6 +60,20 @@ func TestCLIRendersYOLOSampleWithoutColor(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "\x1b[") {
 		t.Fatalf("output unexpectedly contains ANSI color: %q", stdout.String())
+	}
+}
+
+func TestCLIRejectsRemovedColorOption(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := Run([]string{"image.jpg", "--color", "always"}, &stdout, &stderr)
+
+	if exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "unknown option: --color") {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 
