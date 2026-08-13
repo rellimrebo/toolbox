@@ -59,6 +59,18 @@ reviewed frames are treated as intentional work and are never repopulated automa
 
 Boxes copied from the preceding frame use a dashed outline and remain drafts until the current frame is marked reviewed.
 
+## Inference providers
+
+Model integrations implement the `InferenceProvider` protocol in `frame_labeler.inference`.
+A provider receives a PIL image, source-frame metadata, and the project class catalog, then
+returns source-pixel `Detection` values. The core validates and clips detections and records the
+provider identifier and optional confidence with each inferred box.
+
+`suggest_boxes()` converts provider output into annotation boxes. Pass those boxes to
+`AnnotationProject.seed_inferred_boxes()` to seed an empty unreviewed frame. This method never
+overwrites existing boxes or an intentionally empty draft or reviewed frame. Concrete model
+runtimes and GUI scheduling remain separate from the core package.
+
 ## Export
 
 Only reviewed frames are exported:

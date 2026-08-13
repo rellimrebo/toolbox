@@ -11,7 +11,7 @@ from typing import Any
 
 from frame_labeler.domain import Box, BoxOrigin, FrameRecord, ReviewState
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class ProjectError(RuntimeError):
@@ -51,6 +51,37 @@ def _validate_classes(class_names: Sequence[str]) -> tuple[str, ...]:
     if len(set(cleaned)) != len(cleaned):
         raise ValueError("Class names must be unique")
     return cleaned
+
+
+def _create_boxes_table(connection: sqlite3.Connection, table_name: str) -> None:
+    if table_name not in {"boxes", "boxes_v2"}:
+        raise ValueError(f"Unexpected boxes table name: {table_name}")
+    connection.execute(
+        f"""
+        CREATE TABLE {table_name} (
+            id TEXT PRIMARY KEY,
+            frame_index INTEGER NOT NULL REFERENCES frames(source_index) ON DELETE CASCADE,
+            class_id INTEGER NOT NULL REFERENCES classes(id),
+            x_min REAL NOT NULL,
+            y_min REAL NOT NULL,
+            x_max REAL NOT NULL,
+            y_max REAL NOT NULL,
+            origin TEXT NOT NULL CHECK (origin IN ('manual', 'copied', 'inferred')),
+            source_box_id TEXT,
+            inference_provider TEXT,
+            confidence REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK (x_max > x_min),
+            CHECK (y_max > y_min),
+            CHECK (origin != 'inferred' OR inference_provider IS NOT NULL),
+            CHECK (
+                origin != 'manual'
+                OR (inference_provider IS NULL AND confidence IS NULL)
+            )
+        )
+        """
+    )
 
 
 class AnnotationProject:
@@ -119,7 +150,7 @@ class AnnotationProject:
         project = cls(path, connection)
         try:
             version = int(project._metadata("schema_version"))
-            if version != SCHEMA_VERSION:
+            if version not in {1, SCHEMA_VERSION}:
                 raise ProjectError(f"Unsupported project schema version: {version}")
             recorded = json.loads(project._metadata("source_identity"))
             source = Path(source_path) if source_path is not None else Path(recorded["path"])
@@ -127,6 +158,8 @@ class AnnotationProject:
                 raise SourceMismatchError(
                     "The project source does not match the current media file"
                 )
+            if version == 1:
+                project._migrate_v1_to_v2()
             return project
         except Exception:
             project.close()
@@ -154,24 +187,38 @@ class AnnotationProject:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
-            CREATE TABLE boxes (
-                id TEXT PRIMARY KEY,
-                frame_index INTEGER NOT NULL REFERENCES frames(source_index) ON DELETE CASCADE,
-                class_id INTEGER NOT NULL REFERENCES classes(id),
-                x_min REAL NOT NULL,
-                y_min REAL NOT NULL,
-                x_max REAL NOT NULL,
-                y_max REAL NOT NULL,
-                origin TEXT NOT NULL CHECK (origin IN ('manual', 'copied')),
-                source_box_id TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                CHECK (x_max > x_min),
-                CHECK (y_max > y_min)
-            );
-            CREATE INDEX boxes_frame_index ON boxes(frame_index);
             """
         )
+        _create_boxes_table(self._connection, "boxes")
+        self._connection.execute("CREATE INDEX boxes_frame_index ON boxes(frame_index)")
+
+    def _migrate_v1_to_v2(self) -> None:
+        now = _utc_now()
+        with self._connection:
+            _create_boxes_table(self._connection, "boxes_v2")
+            self._connection.execute(
+                """
+                INSERT INTO boxes_v2(
+                    id, frame_index, class_id, x_min, y_min, x_max, y_max,
+                    origin, source_box_id, inference_provider, confidence,
+                    created_at, updated_at
+                )
+                SELECT
+                    id, frame_index, class_id, x_min, y_min, x_max, y_max,
+                    origin, source_box_id, NULL, NULL, created_at, updated_at
+                FROM boxes
+                """
+            )
+            self._connection.execute("DROP TABLE boxes")
+            self._connection.execute("ALTER TABLE boxes_v2 RENAME TO boxes")
+            self._connection.execute("CREATE INDEX boxes_frame_index ON boxes(frame_index)")
+            self._connection.execute(
+                "UPDATE metadata SET value = ? WHERE key = 'schema_version'",
+                (str(SCHEMA_VERSION),),
+            )
+            self._connection.execute(
+                "UPDATE metadata SET value = ? WHERE key = 'updated_at'", (now,)
+            )
 
     def _metadata(self, key: str) -> str:
         row = self._connection.execute(
@@ -284,6 +331,8 @@ class AnnotationProject:
                 *box.coordinates,
                 BoxOrigin.COPIED,
                 source_box_id=box.id,
+                inference_provider=box.inference_provider,
+                confidence=box.confidence,
             )
             self._insert_box(frame_index, copied, now)
 
@@ -331,6 +380,12 @@ class AnnotationProject:
                 source_box_id=(
                     str(row["source_box_id"]) if row["source_box_id"] is not None else None
                 ),
+                inference_provider=(
+                    str(row["inference_provider"])
+                    if row["inference_provider"] is not None
+                    else None
+                ),
+                confidence=(float(row["confidence"]) if row["confidence"] is not None else None),
             )
             for row in rows
         )
@@ -356,13 +411,25 @@ class AnnotationProject:
                 (ReviewState.DRAFT.value, now, frame_index),
             )
 
+    def seed_inferred_boxes(self, frame_index: int, boxes: Sequence[Box]) -> bool:
+        if not boxes:
+            return False
+        if any(box.origin is not BoxOrigin.INFERRED for box in boxes):
+            raise ValueError("Inference seeding accepts only inferred boxes")
+        frame = self.get_frame(frame_index)
+        if frame.state is not ReviewState.UNREVIEWED or self.get_boxes(frame_index):
+            return False
+        self.replace_boxes(frame_index, boxes)
+        return True
+
     def _insert_box(self, frame_index: int, box: Box, now: str) -> None:
         self._connection.execute(
             """
             INSERT INTO boxes(
                 id, frame_index, class_id, x_min, y_min, x_max, y_max,
-                origin, source_box_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                origin, source_box_id, inference_provider, confidence,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 box.id,
@@ -371,6 +438,8 @@ class AnnotationProject:
                 *box.coordinates,
                 box.origin.value,
                 box.source_box_id,
+                box.inference_provider,
+                box.confidence,
                 now,
                 now,
             ),

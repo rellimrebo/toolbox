@@ -8,6 +8,7 @@ from enum import StrEnum
 class BoxOrigin(StrEnum):
     MANUAL = "manual"
     COPIED = "copied"
+    INFERRED = "inferred"
 
 
 class ReviewState(StrEnum):
@@ -26,6 +27,8 @@ class Box:
     y_max: float
     origin: BoxOrigin
     source_box_id: str | None = None
+    inference_provider: str | None = None
+    confidence: float | None = None
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -34,6 +37,20 @@ class Box:
             raise ValueError("Class ID cannot be negative")
         if self.x_max <= self.x_min or self.y_max <= self.y_min:
             raise ValueError("Box width and height must be greater than zero")
+        if self.inference_provider is not None and (
+            not self.inference_provider.strip()
+            or "\n" in self.inference_provider
+            or "\r" in self.inference_provider
+        ):
+            raise ValueError("Inference provider must be a non-empty, single-line identifier")
+        if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
+            raise ValueError("Inference confidence must be between zero and one")
+        if self.origin is BoxOrigin.INFERRED and self.inference_provider is None:
+            raise ValueError("Inferred boxes must identify their inference provider")
+        if self.origin is BoxOrigin.MANUAL and (
+            self.inference_provider is not None or self.confidence is not None
+        ):
+            raise ValueError("Manual boxes cannot contain inference provenance")
 
     @property
     def coordinates(self) -> tuple[float, float, float, float]:

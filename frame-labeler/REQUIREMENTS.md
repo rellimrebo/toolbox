@@ -91,13 +91,24 @@ frame-labeler export PROJECT --format yolo --output DIRECTORY
 - A class used by an annotation cannot be deleted silently.
 - The active class can be changed without leaving the canvas.
 
+### FR-7: Inference-provider boundary
+
+- Model-specific runtimes integrate through a typed provider protocol and remain optional
+  dependencies outside the core package.
+- Providers receive the source image, frame index, timestamp, and stable project class catalog.
+- Provider detections use source-pixel coordinates, project class IDs, and optional confidence.
+- Provider output is validated and clipped before becoming editable draft boxes.
+- Inference may seed only an empty `unreviewed` frame. It must not overwrite manual work,
+  carry-forward boxes, or intentionally empty `draft` and `reviewed` frames.
+
 ## Persistence Requirements
 
 - The canonical project state is a versioned SQLite database stored at the requested project path.
 - Export files are derived artifacts and are never read as canonical project state.
 - Box coordinates are stored as `x_min`, `y_min`, `x_max`, and `y_max` in original source-pixel space using sufficient precision for subpixel transforms.
 - The schema records source identity and metadata, class IDs and names, sampling configuration, dataset split, frame index and timestamp, frame dimensions, review state, stable box IDs, box origin, and creation/update timestamps.
-- Box origin distinguishes boxes drawn on the current frame from boxes copied from the preceding frame.
+- Box origin distinguishes manual, copied, and inferred boxes. Inferred boxes retain their
+  provider identifier and optional confidence; copied inferred boxes retain that provenance.
 - Schema changes require explicit versioning and tested migrations.
 - A source mismatch must never silently attach existing annotations to different media.
 - Writes must be atomic. An interrupted write must leave the last committed state readable.
@@ -132,6 +143,8 @@ The YOLO representation follows the current Ultralytics detection dataset specif
 8. Reopening with different media produces a source-mismatch error rather than displaying old annotations.
 9. YOLO export round-trips every box to within `1` source pixel and loads through the pinned supported Ultralytics version without dataset-format errors.
 10. Repeating an unchanged export produces equivalent content and no duplicate or stale project files.
+11. A fake inference provider can seed an empty unreviewed frame with validated, source-pixel
+    draft boxes while preserving provider and confidence provenance across restart.
 
 ### Scale acceptance
 

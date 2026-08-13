@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -182,6 +183,161 @@ def test_first_frame_starts_empty_without_a_preceding_frame(tmp_path: Path, sour
     assert frame.state is ReviewState.UNREVIEWED
     assert project.get_boxes(0) == ()
     project.close()
+
+
+def test_inference_seeds_only_empty_unreviewed_frame(tmp_path: Path, source: Path) -> None:
+    project = AnnotationProject.create(tmp_path / "labels.sqlite3", source, class_names=["person"])
+    project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
+    inferred = Box(
+        "inferred-1",
+        0,
+        10.0,
+        12.0,
+        30.0,
+        42.0,
+        BoxOrigin.INFERRED,
+        inference_provider="stub-detector/v1",
+        confidence=0.8,
+    )
+
+    assert project.seed_inferred_boxes(0, [inferred]) is True
+    assert project.seed_inferred_boxes(0, []) is False
+    assert project.get_frame(0).state is ReviewState.DRAFT
+    assert project.get_boxes(0) == (inferred,)
+    project.close()
+
+
+def test_inference_does_not_overwrite_intentionally_empty_frame(
+    tmp_path: Path, source: Path
+) -> None:
+    project = AnnotationProject.create(tmp_path / "labels.sqlite3", source, class_names=["person"])
+    project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
+    project.mark_reviewed(0)
+    inferred = Box(
+        "inferred-1",
+        0,
+        10.0,
+        12.0,
+        30.0,
+        42.0,
+        BoxOrigin.INFERRED,
+        inference_provider="stub-detector/v1",
+        confidence=0.8,
+    )
+
+    assert project.seed_inferred_boxes(0, [inferred]) is False
+    assert project.get_boxes(0) == ()
+    assert project.get_frame(0).state is ReviewState.REVIEWED
+    project.close()
+
+
+def test_project_persists_inference_provenance(tmp_path: Path, source: Path) -> None:
+    project_path = tmp_path / "labels.sqlite3"
+    project = AnnotationProject.create(project_path, source, class_names=["person"])
+    project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
+    inferred = Box(
+        "inferred-1",
+        0,
+        10.0,
+        12.0,
+        30.0,
+        42.0,
+        BoxOrigin.INFERRED,
+        inference_provider="stub-detector/v1",
+        confidence=0.8,
+    )
+    project.seed_inferred_boxes(0, [inferred])
+    project.close()
+
+    reopened = AnnotationProject.open(project_path, source)
+
+    assert reopened.get_boxes(0) == (inferred,)
+    reopened.close()
+
+
+def test_carry_forward_preserves_inference_provenance(tmp_path: Path, source: Path) -> None:
+    project = AnnotationProject.create(tmp_path / "labels.sqlite3", source, class_names=["person"])
+    project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
+    inferred = Box(
+        "inferred-1",
+        0,
+        10.0,
+        12.0,
+        30.0,
+        42.0,
+        BoxOrigin.INFERRED,
+        inference_provider="stub-detector/v1",
+        confidence=0.8,
+    )
+    project.seed_inferred_boxes(0, [inferred])
+
+    project.ensure_frame(1, 0.1, 100, 80, previous_index=0)
+
+    copied = project.get_boxes(1)[0]
+    assert copied.origin is BoxOrigin.COPIED
+    assert copied.source_box_id == inferred.id
+    assert copied.inference_provider == inferred.inference_provider
+    assert copied.confidence == inferred.confidence
+    project.close()
+
+
+def test_open_migrates_v1_boxes_without_losing_annotations(tmp_path: Path, source: Path) -> None:
+    project_path = tmp_path / "labels.sqlite3"
+    project = AnnotationProject.create(project_path, source, class_names=["person"])
+    project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
+    project.replace_boxes(
+        0,
+        [Box("manual-1", 0, 10.0, 12.0, 30.0, 42.0, BoxOrigin.MANUAL)],
+    )
+    project.close()
+    connection = sqlite3.connect(project_path)
+    with connection:
+        connection.execute("UPDATE metadata SET value = '1' WHERE key = 'schema_version'")
+        connection.execute("ALTER TABLE boxes RENAME TO boxes_v2")
+        connection.executescript(
+            """
+            CREATE TABLE boxes (
+                id TEXT PRIMARY KEY,
+                frame_index INTEGER NOT NULL REFERENCES frames(source_index) ON DELETE CASCADE,
+                class_id INTEGER NOT NULL REFERENCES classes(id),
+                x_min REAL NOT NULL,
+                y_min REAL NOT NULL,
+                x_max REAL NOT NULL,
+                y_max REAL NOT NULL,
+                origin TEXT NOT NULL CHECK (origin IN ('manual', 'copied')),
+                source_box_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                CHECK (x_max > x_min),
+                CHECK (y_max > y_min)
+            );
+            INSERT INTO boxes(
+                id, frame_index, class_id, x_min, y_min, x_max, y_max,
+                origin, source_box_id, created_at, updated_at
+            )
+            SELECT
+                id, frame_index, class_id, x_min, y_min, x_max, y_max,
+                origin, source_box_id, created_at, updated_at
+            FROM boxes_v2;
+            DROP TABLE boxes_v2;
+            CREATE INDEX boxes_frame_index ON boxes(frame_index);
+            """
+        )
+    connection.close()
+
+    migrated = AnnotationProject.open(project_path, source)
+
+    assert migrated.get_boxes(0) == (Box("manual-1", 0, 10.0, 12.0, 30.0, 42.0, BoxOrigin.MANUAL),)
+    migrated.close()
+    connection = sqlite3.connect(project_path)
+    assert connection.execute(
+        "SELECT value FROM metadata WHERE key = 'schema_version'"
+    ).fetchone() == ("2",)
+    assert {row[1] for row in connection.execute("PRAGMA table_info(boxes)")} >= {
+        "inference_provider",
+        "confidence",
+    }
+    connection.close()
 
 
 def test_forward_navigation_from_reviewed_empty_frame_starts_empty(
