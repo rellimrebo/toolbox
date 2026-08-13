@@ -10,8 +10,23 @@ from PySide6.QtWidgets import QToolBar
 
 from frame_labeler.domain import Box, BoxOrigin, ReviewState
 from frame_labeler.gui import AnnotationCanvas, LabelerWindow
-from frame_labeler.media import open_media
+from frame_labeler.media import MediaFrame, open_media
 from frame_labeler.project import AnnotationProject
+
+
+class _TwoFrameMedia:
+    frame_count = 2
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def read_frame(self, index: int) -> MediaFrame:
+        if index not in {0, 1}:
+            raise IndexError(index)
+        return MediaFrame(index, index / 10.0, Image.new("RGB", (100, 80), "white"))
+
+    def close(self) -> None:
+        return
 
 
 def _create_window_with_boxes(
@@ -106,6 +121,46 @@ def test_labeler_window_loads_image_project(qtbot, tmp_path: Path) -> None:  # t
     assert window.canvas.boxes() == ()
     assert window.box_list.count() == 0
 
+    window.close()
+
+
+def test_next_frame_carries_draft_boxes_without_review(qtbot, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    source_path = tmp_path / "video-source.png"
+    Image.new("RGB", (100, 80), "white").save(source_path)
+    project = AnnotationProject.create(
+        tmp_path / "labels.sqlite3", source_path, class_names=["object"]
+    )
+    window = LabelerWindow(project, _TwoFrameMedia(source_path))
+    qtbot.addWidget(window)
+    window.canvas.box_created.emit((10.0, 12.0, 30.0, 42.0))
+
+    window.next_frame()
+
+    assert window.current_frame_index == 1
+    copied_box = window.canvas.boxes()[0]
+    assert copied_box.coordinates == (10.0, 12.0, 30.0, 42.0)
+    assert copied_box.origin is BoxOrigin.COPIED
+    assert project.get_frame(1).state is ReviewState.DRAFT
+    window.close()
+
+
+def test_next_frame_seeds_previously_visited_unreviewed_frame(qtbot, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    source_path = tmp_path / "video-source.png"
+    Image.new("RGB", (100, 80), "white").save(source_path)
+    project = AnnotationProject.create(
+        tmp_path / "labels.sqlite3", source_path, class_names=["object"]
+    )
+    window = LabelerWindow(project, _TwoFrameMedia(source_path))
+    qtbot.addWidget(window)
+    window.next_frame()
+    window.previous_frame()
+    window.canvas.box_created.emit((10.0, 12.0, 30.0, 42.0))
+
+    window.next_frame()
+
+    assert window.current_frame_index == 1
+    assert window.canvas.boxes()[0].coordinates == (10.0, 12.0, 30.0, 42.0)
+    assert project.get_frame(1).state is ReviewState.DRAFT
     window.close()
 
 

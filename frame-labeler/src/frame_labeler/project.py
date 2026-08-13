@@ -240,15 +240,26 @@ class AnnotationProject:
             frame = self._frame_from_row(existing)
             if (frame.width, frame.height) != (width, height):
                 raise ProjectError("Stored frame dimensions do not match decoded media")
+            if (
+                previous_index is not None
+                and frame.state is ReviewState.UNREVIEWED
+                and not self.get_boxes(index)
+            ):
+                boxes_to_carry = self.get_boxes(previous_index)
+                if boxes_to_carry:
+                    now = _utc_now()
+                    with self._connection:
+                        self._insert_copied_boxes(index, boxes_to_carry, now)
+                        self._connection.execute(
+                            "UPDATE frames SET state = ?, updated_at = ? WHERE source_index = ?",
+                            (ReviewState.DRAFT.value, now, index),
+                        )
+                    return self.get_frame(index)
             return frame
 
         previous_boxes: tuple[Box, ...] = ()
         if previous_index is not None:
-            previous = self._connection.execute(
-                "SELECT state FROM frames WHERE source_index = ?", (previous_index,)
-            ).fetchone()
-            if previous is not None and previous["state"] == ReviewState.REVIEWED.value:
-                previous_boxes = self.get_boxes(previous_index)
+            previous_boxes = self.get_boxes(previous_index)
 
         state = ReviewState.DRAFT if previous_boxes else ReviewState.UNREVIEWED
         now = _utc_now()
@@ -262,16 +273,19 @@ class AnnotationProject:
                 """,
                 (index, timestamp_seconds, width, height, state.value, now, now),
             )
-            for box in previous_boxes:
-                copied = Box(
-                    str(uuid.uuid4()),
-                    box.class_id,
-                    *box.coordinates,
-                    BoxOrigin.COPIED,
-                    source_box_id=box.id,
-                )
-                self._insert_box(index, copied, now)
+            self._insert_copied_boxes(index, previous_boxes, now)
         return self.get_frame(index)
+
+    def _insert_copied_boxes(self, frame_index: int, boxes: Sequence[Box], now: str) -> None:
+        for box in boxes:
+            copied = Box(
+                str(uuid.uuid4()),
+                box.class_id,
+                *box.coordinates,
+                BoxOrigin.COPIED,
+                source_box_id=box.id,
+            )
+            self._insert_box(frame_index, copied, now)
 
     def get_frame(self, index: int) -> FrameRecord:
         row = self._connection.execute(

@@ -67,11 +67,12 @@ frame-labeler export PROJECT --format yolo --output DIRECTORY
 ### FR-4: Carry-forward boxes
 
 - The first sampled frame in a new project starts with no boxes because it has no preceding frame.
-- When moving forward to an unvisited sampled frame, boxes from the immediately preceding reviewed sampled frame are copied at the same source-pixel coordinates and with the same classes.
+- When moving forward to an unvisited sampled frame, boxes from the immediately preceding sampled frame are copied at the same source-pixel coordinates and with the same classes, whether that preceding frame is draft or reviewed.
 - Copied boxes are visibly marked as draft.
 - Editing a copied box never changes the preceding frame.
 - Draft boxes are not exportable until the user marks the frame reviewed.
 - Existing annotations on a revisited frame are never overwritten by carry-forward behavior.
+- An existing empty `unreviewed` frame may receive boxes when revisited from its immediately preceding frame; empty `draft` and `reviewed` frames are treated as intentional work and remain empty.
 - A reviewed frame may intentionally contain zero boxes.
 
 ### FR-5: Review and save behavior

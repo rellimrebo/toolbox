@@ -74,6 +74,106 @@ def test_forward_navigation_copies_reviewed_boxes_as_independent_drafts(
     project.close()
 
 
+def test_forward_navigation_copies_draft_boxes(tmp_path: Path, source: Path) -> None:
+    project = AnnotationProject.create(
+        tmp_path / "labels.sqlite3", source, class_names=["person"], stride=3
+    )
+    project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
+    original = Box("box-1", 0, 10.0, 12.0, 30.0, 42.0, BoxOrigin.MANUAL)
+    project.replace_boxes(0, [original])
+
+    copied_frame = project.ensure_frame(
+        3,
+        timestamp_seconds=0.1,
+        width=100,
+        height=80,
+        previous_index=0,
+    )
+
+    assert project.get_frame(0).state is ReviewState.DRAFT
+    assert copied_frame.state is ReviewState.DRAFT
+    copied_box = project.get_boxes(3)[0]
+    assert copied_box.origin is BoxOrigin.COPIED
+    assert copied_box.source_box_id == original.id
+    assert copied_box.coordinates == original.coordinates
+    project.close()
+
+
+def test_revisiting_empty_unreviewed_frame_carries_new_previous_boxes(
+    tmp_path: Path, source: Path
+) -> None:
+    project = AnnotationProject.create(tmp_path / "labels.sqlite3", source, class_names=["person"])
+    project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
+    project.ensure_frame(1, timestamp_seconds=0.1, width=100, height=80)
+    original = Box("box-1", 0, 10.0, 12.0, 30.0, 42.0, BoxOrigin.MANUAL)
+    project.replace_boxes(0, [original])
+
+    revisited = project.ensure_frame(
+        1,
+        timestamp_seconds=0.1,
+        width=100,
+        height=80,
+        previous_index=0,
+    )
+
+    assert revisited.state is ReviewState.DRAFT
+    copied_box = project.get_boxes(1)[0]
+    assert copied_box.origin is BoxOrigin.COPIED
+    assert copied_box.source_box_id == original.id
+    assert copied_box.coordinates == original.coordinates
+    project.close()
+
+
+def test_revisiting_intentionally_emptied_draft_does_not_restore_boxes(
+    tmp_path: Path, source: Path
+) -> None:
+    project = AnnotationProject.create(tmp_path / "labels.sqlite3", source, class_names=["person"])
+    project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
+    project.ensure_frame(1, timestamp_seconds=0.1, width=100, height=80)
+    project.replace_boxes(1, [])
+    project.replace_boxes(
+        0,
+        [Box("box-1", 0, 10.0, 12.0, 30.0, 42.0, BoxOrigin.MANUAL)],
+    )
+
+    revisited = project.ensure_frame(
+        1,
+        timestamp_seconds=0.1,
+        width=100,
+        height=80,
+        previous_index=0,
+    )
+
+    assert revisited.state is ReviewState.DRAFT
+    assert project.get_boxes(1) == ()
+    project.close()
+
+
+def test_revisiting_reviewed_empty_frame_does_not_restore_boxes(
+    tmp_path: Path, source: Path
+) -> None:
+    project = AnnotationProject.create(tmp_path / "labels.sqlite3", source, class_names=["person"])
+    project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
+    project.ensure_frame(1, timestamp_seconds=0.1, width=100, height=80)
+    project.mark_reviewed(1)
+    project.replace_boxes(
+        0,
+        [Box("box-1", 0, 10.0, 12.0, 30.0, 42.0, BoxOrigin.MANUAL)],
+    )
+
+    revisited = project.ensure_frame(
+        1,
+        timestamp_seconds=0.1,
+        width=100,
+        height=80,
+        previous_index=0,
+    )
+
+    assert revisited.state is ReviewState.REVIEWED
+    assert project.get_boxes(1) == ()
+    project.close()
+
+
 def test_first_frame_starts_empty_without_a_preceding_frame(tmp_path: Path, source: Path) -> None:
     project = AnnotationProject.create(tmp_path / "labels.sqlite3", source, class_names=["person"])
 
