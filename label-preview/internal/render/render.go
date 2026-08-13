@@ -40,13 +40,6 @@ func FitTerminalSize(imageWidth int, imageHeight int, maxWidth int, maxHeight in
 	return columns, rows, nil
 }
 
-func max(first int, second int) int {
-	if first > second {
-		return first
-	}
-	return second
-}
-
 func blankCanvas(columns int, rows int) [][]rune {
 	canvas := make([][]rune, rows)
 	for row := range rows {
@@ -118,9 +111,7 @@ func Render(
 	fmt.Fprintf(&output, "┌%s┐\n", strings.Repeat("─", columns))
 	for _, row := range canvas {
 		output.WriteRune('│')
-		for _, current := range row {
-			output.WriteRune(current)
-		}
+		output.WriteString(string(row))
 		output.WriteString("│\n")
 	}
 	fmt.Fprintf(&output, "└%s┘", strings.Repeat("─", columns))

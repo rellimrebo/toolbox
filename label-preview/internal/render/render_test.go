@@ -43,7 +43,7 @@ func TestFitRejectsUnreasonableOutputArea(t *testing.T) {
 }
 
 func TestPreviewDrawsOnlyFrameAndNamedBox(t *testing.T) {
-	box := dataset.Box{ClassID: 0, Label: "dog", XMin: 0.125, YMin: 0.25, XMax: 0.875, YMax: 0.75}
+	box := dataset.Box{Label: "dog", XMin: 0.125, YMin: 0.25, XMax: 0.875, YMax: 0.75}
 
 	preview, err := Render(16, 8, []dataset.Box{box}, 16, 8)
 	if err != nil {

@@ -34,20 +34,13 @@ func loadPascalVOC(annotationPath string, imageWidth int, imageHeight int) ([]Bo
 		return nil, fmt.Errorf("parse Pascal VOC annotation %s: %w", annotationPath, err)
 	}
 
-	classIDs := map[string]int{}
 	var boxes []Box
 	for _, object := range document.Objects {
 		name, nameErr := validateClassName(object.Name)
 		if nameErr != nil {
 			return nil, fmt.Errorf("invalid Pascal VOC class: %w", nameErr)
 		}
-		classID, known := classIDs[name]
-		if !known {
-			classID = len(classIDs)
-			classIDs[name] = classID
-		}
 		box, boxErr := normalizedBox(
-			classID,
 			name,
 			object.Box.XMin,
 			object.Box.YMin,

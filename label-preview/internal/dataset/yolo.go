@@ -144,12 +144,11 @@ func loadYOLO(labelPath string, configPath string) ([]Box, error) {
 			label = strconv.Itoa(classID)
 		}
 		boxes = append(boxes, Box{
-			ClassID: classID,
-			Label:   label,
-			XMin:    math.Max(0, centerX-width/2),
-			YMin:    math.Max(0, centerY-height/2),
-			XMax:    math.Min(1, centerX+width/2),
-			YMax:    math.Min(1, centerY+height/2),
+			Label: label,
+			XMin:  math.Max(0, centerX-width/2),
+			YMin:  math.Max(0, centerY-height/2),
+			XMax:  math.Min(1, centerX+width/2),
+			YMax:  math.Min(1, centerY+height/2),
 		})
 	}
 	if err := scanner.Err(); err != nil {

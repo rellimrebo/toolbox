@@ -139,7 +139,7 @@ func run(arguments []string, output io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("decode image: %w", err)
 	}
-	annotations, err := dataset.LoadAnnotations(
+	boxes, err := dataset.LoadAnnotations(
 		options.imagePath,
 		configuration.Width,
 		configuration.Height,
@@ -150,7 +150,7 @@ func run(arguments []string, output io.Writer) error {
 	preview, err := render.Render(
 		configuration.Width,
 		configuration.Height,
-		annotations.Boxes,
+		boxes,
 		options.width,
 		options.maxHeight,
 	)

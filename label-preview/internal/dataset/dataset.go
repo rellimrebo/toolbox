@@ -11,30 +11,24 @@ import (
 	"unicode/utf8"
 )
 
-type Format string
+type format string
 
 const (
-	FormatYOLO      Format = "YOLO"
-	FormatCOCO      Format = "COCO"
-	FormatPascalVOC Format = "Pascal VOC"
+	formatYOLO      format = "YOLO"
+	formatCOCO      format = "COCO"
+	formatPascalVOC format = "Pascal VOC"
 )
 
 type Box struct {
-	ClassID int
-	Label   string
-	XMin    float64
-	YMin    float64
-	XMax    float64
-	YMax    float64
-}
-
-type Annotations struct {
-	Format Format
-	Boxes  []Box
+	Label string
+	XMin  float64
+	YMin  float64
+	XMax  float64
+	YMax  float64
 }
 
 type source struct {
-	format         Format
+	format         format
 	annotationPath string
 	metadataPath   string
 	datasetRoot    string
@@ -95,7 +89,7 @@ func discoverYOLO(imagePath string) (source, bool) {
 				)
 				if configPath != "" {
 					return source{
-						format:         FormatYOLO,
+						format:         formatYOLO,
 						annotationPath: labelPath,
 						metadataPath:   configPath,
 					}, true
@@ -118,7 +112,7 @@ func discoverCOCO(imagePath string) (source, bool) {
 	)
 	if local != "" {
 		return source{
-			format:         FormatCOCO,
+			format:         formatCOCO,
 			annotationPath: local,
 			datasetRoot:    imageDirectory,
 		}, true
@@ -132,7 +126,7 @@ func discoverCOCO(imagePath string) (source, bool) {
 		)
 		if candidate != "" {
 			return source{
-				format:         FormatCOCO,
+				format:         formatCOCO,
 				annotationPath: candidate,
 				datasetRoot:    directory,
 			}, true
@@ -144,7 +138,7 @@ func discoverCOCO(imagePath string) (source, bool) {
 func discoverPascalVOC(imagePath string) (source, bool) {
 	sidecar := strings.TrimSuffix(imagePath, filepath.Ext(imagePath)) + ".xml"
 	if path := firstExisting(sidecar); path != "" {
-		return source{format: FormatPascalVOC, annotationPath: path}, true
+		return source{format: formatPascalVOC, annotationPath: path}, true
 	}
 	imageDirectory := filepath.Dir(imagePath)
 	if filepath.Base(imageDirectory) != "JPEGImages" {
@@ -156,18 +150,18 @@ func discoverPascalVOC(imagePath string) (source, bool) {
 		strings.TrimSuffix(filepath.Base(imagePath), filepath.Ext(imagePath))+".xml",
 	)
 	if path := firstExisting(annotation); path != "" {
-		return source{format: FormatPascalVOC, annotationPath: path}, true
+		return source{format: formatPascalVOC, annotationPath: path}, true
 	}
 	return source{}, false
 }
 
-func LoadAnnotations(imagePath string, imageWidth int, imageHeight int) (Annotations, error) {
+func LoadAnnotations(imagePath string, imageWidth int, imageHeight int) ([]Box, error) {
 	image, err := existingImage(imagePath)
 	if err != nil {
-		return Annotations{}, err
+		return nil, err
 	}
 	if imageWidth <= 0 || imageHeight <= 0 {
-		return Annotations{}, errors.New("image dimensions must be greater than zero")
+		return nil, errors.New("image dimensions must be greater than zero")
 	}
 
 	discoverers := []func(string) (source, bool){discoverPascalVOC, discoverYOLO, discoverCOCO}
@@ -178,7 +172,7 @@ func LoadAnnotations(imagePath string, imageWidth int, imageHeight int) (Annotat
 		}
 	}
 	if len(sources) == 0 {
-		return Annotations{}, fmt.Errorf(
+		return nil, fmt.Errorf(
 			"image is not in a recognized dataset layout (supported: YOLO, COCO detection, Pascal VOC)",
 		)
 	}
@@ -187,7 +181,7 @@ func LoadAnnotations(imagePath string, imageWidth int, imageHeight int) (Annotat
 		for index, candidate := range sources {
 			formats[index] = string(candidate.format)
 		}
-		return Annotations{}, fmt.Errorf(
+		return nil, fmt.Errorf(
 			"dataset layout is ambiguous; matched %s",
 			strings.Join(formats, " and "),
 		)
@@ -196,9 +190,9 @@ func LoadAnnotations(imagePath string, imageWidth int, imageHeight int) (Annotat
 	candidate := sources[0]
 	var boxes []Box
 	switch candidate.format {
-	case FormatYOLO:
+	case formatYOLO:
 		boxes, err = loadYOLO(candidate.annotationPath, candidate.metadataPath)
-	case FormatCOCO:
+	case formatCOCO:
 		boxes, err = loadCOCO(
 			candidate.annotationPath,
 			candidate.datasetRoot,
@@ -206,15 +200,15 @@ func LoadAnnotations(imagePath string, imageWidth int, imageHeight int) (Annotat
 			imageWidth,
 			imageHeight,
 		)
-	case FormatPascalVOC:
+	case formatPascalVOC:
 		boxes, err = loadPascalVOC(candidate.annotationPath, imageWidth, imageHeight)
 	default:
 		err = fmt.Errorf("unsupported annotation format: %s", candidate.format)
 	}
 	if err != nil {
-		return Annotations{}, err
+		return nil, err
 	}
-	return Annotations{Format: candidate.format, Boxes: boxes}, nil
+	return boxes, nil
 }
 
 func validateClassName(value string) (string, error) {
@@ -233,7 +227,6 @@ func validateClassName(value string) (string, error) {
 }
 
 func normalizedBox(
-	classID int,
 	label string,
 	xMin float64,
 	yMin float64,
@@ -242,9 +235,6 @@ func normalizedBox(
 	imageWidth int,
 	imageHeight int,
 ) (Box, error) {
-	if classID < 0 {
-		return Box{}, errors.New("class id must be non-negative")
-	}
 	coordinates := []float64{xMin, yMin, xMax, yMax}
 	for _, value := range coordinates {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
@@ -263,11 +253,10 @@ func normalizedBox(
 		return Box{}, err
 	}
 	return Box{
-		ClassID: classID,
-		Label:   label,
-		XMin:    xMin / float64(imageWidth),
-		YMin:    yMin / float64(imageHeight),
-		XMax:    xMax / float64(imageWidth),
-		YMax:    yMax / float64(imageHeight),
+		Label: label,
+		XMin:  xMin / float64(imageWidth),
+		YMin:  yMin / float64(imageHeight),
+		XMax:  xMax / float64(imageWidth),
+		YMax:  yMax / float64(imageHeight),
 	}, nil
 }

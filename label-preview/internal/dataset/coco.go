@@ -257,7 +257,6 @@ func loadCOCO(
 			label = strconv.Itoa(annotation.CategoryID)
 		}
 		box, boxErr := normalizedBox(
-			annotation.CategoryID,
 			label,
 			annotation.BBox[0],
 			annotation.BBox[1],

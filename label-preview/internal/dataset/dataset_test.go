@@ -24,17 +24,14 @@ func TestLoadsStandardYOLODataset(t *testing.T) {
 	writeFile(t, filepath.Join(root, "labels", "train", "dog.txt"), "1 0.5 0.5 0.4 0.6\n")
 	writeFile(t, filepath.Join(root, "dataset.yaml"), "names:\n  0: \"cat\"\n  1: \"dog\"\n")
 
-	annotations, err := LoadAnnotations(image, 100, 80)
+	boxes, err := LoadAnnotations(image, 100, 80)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if annotations.Format != FormatYOLO {
-		t.Fatalf("format = %q, want %q", annotations.Format, FormatYOLO)
+	if len(boxes) != 1 {
+		t.Fatalf("box count = %d, want 1", len(boxes))
 	}
-	if len(annotations.Boxes) != 1 {
-		t.Fatalf("box count = %d, want 1", len(annotations.Boxes))
-	}
-	box := annotations.Boxes[0]
+	box := boxes[0]
 	if box.Label != "dog" || !closeEnough(box.XMin, 0.3) || !closeEnough(box.YMin, 0.2) ||
 		!closeEnough(box.XMax, 0.7) || !closeEnough(box.YMax, 0.8) {
 		t.Fatalf("unexpected box: %#v", box)
@@ -48,13 +45,12 @@ func TestLoadsSplitFirstYOLODatasetWithDataYAML(t *testing.T) {
 	writeFile(t, filepath.Join(root, "train", "labels", "dog.txt"), "0 0.5 0.5 1 1\n")
 	writeFile(t, filepath.Join(root, "data.yaml"), "names: [dog]\n")
 
-	annotations, err := LoadAnnotations(image, 100, 80)
+	boxes, err := LoadAnnotations(image, 100, 80)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if annotations.Format != FormatYOLO || len(annotations.Boxes) != 1 ||
-		annotations.Boxes[0].Label != "dog" {
-		t.Fatalf("unexpected annotations: %#v", annotations)
+	if len(boxes) != 1 || boxes[0].Label != "dog" {
+		t.Fatalf("unexpected boxes: %#v", boxes)
 	}
 }
 
@@ -65,12 +61,12 @@ func TestLoadsYOLOIndentlessClassSequence(t *testing.T) {
 	writeFile(t, filepath.Join(root, "labels", "test", "dog.txt"), "1 0.5 0.5 1 1\n")
 	writeFile(t, filepath.Join(root, "data.yaml"), "names:\n- cat\n- dog\n")
 
-	annotations, err := LoadAnnotations(image, 100, 80)
+	boxes, err := LoadAnnotations(image, 100, 80)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(annotations.Boxes) != 1 || annotations.Boxes[0].Label != "dog" {
-		t.Fatalf("unexpected annotations: %#v", annotations)
+	if len(boxes) != 1 || boxes[0].Label != "dog" {
+		t.Fatalf("unexpected boxes: %#v", boxes)
 	}
 }
 
@@ -80,12 +76,12 @@ func TestMissingYOLOLabelRepresentsEmptySample(t *testing.T) {
 	writeFile(t, image, "")
 	writeFile(t, filepath.Join(root, "dataset.yaml"), "names: [cat, dog]\n")
 
-	annotations, err := LoadAnnotations(image, 100, 80)
+	boxes, err := LoadAnnotations(image, 100, 80)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if annotations.Format != FormatYOLO || len(annotations.Boxes) != 0 {
-		t.Fatalf("unexpected annotations: %#v", annotations)
+	if len(boxes) != 0 {
+		t.Fatalf("unexpected boxes: %#v", boxes)
 	}
 }
 
@@ -99,14 +95,14 @@ func TestLoadsStandardCOCODetectionDataset(t *testing.T) {
   "categories": [{"id": 3, "name": "cat"}]
 }`)
 
-	annotations, err := LoadAnnotations(image, 200, 100)
+	boxes, err := LoadAnnotations(image, 200, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if annotations.Format != FormatCOCO || len(annotations.Boxes) != 1 {
-		t.Fatalf("unexpected annotations: %#v", annotations)
+	if len(boxes) != 1 {
+		t.Fatalf("unexpected boxes: %#v", boxes)
 	}
-	box := annotations.Boxes[0]
+	box := boxes[0]
 	if box.Label != "cat" || !closeEnough(box.XMin, 0.1) || !closeEnough(box.YMin, 0.1) ||
 		!closeEnough(box.XMax, 0.3) || !closeEnough(box.YMax, 0.6) {
 		t.Fatalf("unexpected box: %#v", box)
@@ -123,13 +119,12 @@ func TestLoadsRoboflowStyleCOCODataset(t *testing.T) {
   "categories": [{"id": 1, "name": "car"}]
 }`)
 
-	annotations, err := LoadAnnotations(image, 40, 20)
+	boxes, err := LoadAnnotations(image, 40, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if annotations.Format != FormatCOCO || len(annotations.Boxes) != 1 ||
-		annotations.Boxes[0].Label != "car" {
-		t.Fatalf("unexpected annotations: %#v", annotations)
+	if len(boxes) != 1 || boxes[0].Label != "car" {
+		t.Fatalf("unexpected boxes: %#v", boxes)
 	}
 }
 
@@ -143,13 +138,12 @@ func TestLoadsCOCOWhenAnnotationsPrecedeImages(t *testing.T) {
   "images": [{"id": 7, "file_name": "cat.jpg", "width": 200, "height": 100}]
 }`)
 
-	annotations, err := LoadAnnotations(image, 200, 100)
+	boxes, err := LoadAnnotations(image, 200, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if annotations.Format != FormatCOCO || len(annotations.Boxes) != 1 ||
-		annotations.Boxes[0].Label != "cat" {
-		t.Fatalf("unexpected annotations: %#v", annotations)
+	if len(boxes) != 1 || boxes[0].Label != "cat" {
+		t.Fatalf("unexpected boxes: %#v", boxes)
 	}
 }
 
@@ -163,14 +157,14 @@ func TestLoadsStandardPascalVOCDataset(t *testing.T) {
   <object><name>dog</name><bndbox><xmin>10</xmin><ymin>20</ymin><xmax>60</xmax><ymax>70</ymax></bndbox></object>
 </annotation>`)
 
-	annotations, err := LoadAnnotations(image, 100, 80)
+	boxes, err := LoadAnnotations(image, 100, 80)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if annotations.Format != FormatPascalVOC || len(annotations.Boxes) != 1 {
-		t.Fatalf("unexpected annotations: %#v", annotations)
+	if len(boxes) != 1 {
+		t.Fatalf("unexpected boxes: %#v", boxes)
 	}
-	box := annotations.Boxes[0]
+	box := boxes[0]
 	if box.Label != "dog" || !closeEnough(box.XMin, 0.1) || !closeEnough(box.YMin, 0.25) ||
 		!closeEnough(box.XMax, 0.6) || !closeEnough(box.YMax, 0.875) {
 		t.Fatalf("unexpected box: %#v", box)
@@ -185,12 +179,12 @@ func TestLoadsPascalVOCXMLBesideImage(t *testing.T) {
   <object><name>dog</name><bndbox><xmin>0</xmin><ymin>0</ymin><xmax>10</xmax><ymax>10</ymax></bndbox></object>
 </annotation>`)
 
-	annotations, err := LoadAnnotations(image, 10, 10)
+	boxes, err := LoadAnnotations(image, 10, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if annotations.Format != FormatPascalVOC || len(annotations.Boxes) != 1 {
-		t.Fatalf("unexpected annotations: %#v", annotations)
+	if len(boxes) != 1 {
+		t.Fatalf("unexpected boxes: %#v", boxes)
 	}
 }
 
