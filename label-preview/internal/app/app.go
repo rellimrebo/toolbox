@@ -20,7 +20,7 @@ import (
 
 const usage = `Usage: label-preview IMAGE [options]
 
-Render an image from a recognized labeled dataset as a compact terminal preview.
+Render labeled boxes from a dataset as a compact terminal preview.
 
 Dataset formats are detected from their standard layout:
   YOLO detection, COCO detection JSON, and Pascal VOC XML.
@@ -135,17 +135,21 @@ func run(arguments []string, output io.Writer) error {
 		return fmt.Errorf("open image: %w", err)
 	}
 	defer imageFile.Close()
-	decoded, _, err := image.Decode(imageFile)
+	configuration, _, err := image.DecodeConfig(imageFile)
 	if err != nil {
 		return fmt.Errorf("decode image: %w", err)
 	}
-	bounds := decoded.Bounds()
-	annotations, err := dataset.LoadAnnotations(options.imagePath, bounds.Dx(), bounds.Dy())
+	annotations, err := dataset.LoadAnnotations(
+		options.imagePath,
+		configuration.Width,
+		configuration.Height,
+	)
 	if err != nil {
 		return err
 	}
 	preview, err := render.Render(
-		decoded,
+		configuration.Width,
+		configuration.Height,
 		annotations.Boxes,
 		options.width,
 		options.maxHeight,

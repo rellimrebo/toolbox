@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func TestCLIRendersPlainYOLOSample(t *testing.T) {
+func TestCLIRendersYOLOFrameAndBoxOnly(t *testing.T) {
 	root := t.TempDir()
 	imagePath := filepath.Join(root, "images", "train", "dog.png")
 	if err := os.MkdirAll(filepath.Dir(imagePath), 0o755); err != nil {
@@ -60,6 +60,9 @@ func TestCLIRendersPlainYOLOSample(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "\x1b[") {
 		t.Fatalf("output unexpectedly contains ANSI color: %q", stdout.String())
+	}
+	if strings.ContainsAny(stdout.String(), ".:=+*#%@") {
+		t.Fatalf("output unexpectedly contains raster characters: %q", stdout.String())
 	}
 }
 

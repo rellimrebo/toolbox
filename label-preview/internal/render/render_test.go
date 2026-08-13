@@ -1,8 +1,6 @@
 package render
 
 import (
-	"image"
-	"image/color"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -44,18 +42,23 @@ func TestFitRejectsUnreasonableOutputArea(t *testing.T) {
 	}
 }
 
-func TestMonochromePreviewDrawsNamedBox(t *testing.T) {
-	source := image.NewRGBA(image.Rect(0, 0, 16, 8))
-	for y := range 8 {
-		for x := range 16 {
-			source.Set(x, y, color.White)
-		}
-	}
+func TestPreviewDrawsOnlyFrameAndNamedBox(t *testing.T) {
 	box := dataset.Box{ClassID: 0, Label: "dog", XMin: 0.125, YMin: 0.25, XMax: 0.875, YMax: 0.75}
 
-	preview, err := Render(source, []dataset.Box{box}, 16, 8)
+	preview, err := Render(16, 8, []dataset.Box{box}, 16, 8)
 	if err != nil {
 		t.Fatal(err)
+	}
+	expected := strings.Join([]string{
+		"┌────────────────┐",
+		"│                │",
+		"│  ┌dog───────┐  │",
+		"│  └──────────┘  │",
+		"│                │",
+		"└────────────────┘",
+	}, "\n")
+	if preview != expected {
+		t.Fatalf("preview =\n%s\nwant =\n%s", preview, expected)
 	}
 	lines := strings.Split(preview, "\n")
 	if len(lines) != 6 {

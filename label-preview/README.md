@@ -1,12 +1,13 @@
 # Label Preview
 
-`label-preview` is a small Go CLI that renders an image from a labeled dataset as a terminal
-image with labeled bounding boxes. It is meant for quick dataset spot checks and novelty
+`label-preview` is a small Go CLI that renders an image's aspect-ratio frame and labeled bounding
+boxes from a dataset. It is meant for quick dataset spot checks and novelty
 previews, not precise annotation review. The compiled executable is self-contained and does not
 require a Go runtime on the target machine.
 
-The renderer uses a short grayscale character ramp and accounts for terminal cells being roughly
-twice as tall as they are wide. Output is always plain text and contains no ANSI color sequences.
+The frame accounts for terminal cells being roughly twice as tall as they are wide. Its interior
+is blank except for annotation boxes and class names. Output contains no pixel approximation or
+ANSI sequences.
 
 ## Setup
 
