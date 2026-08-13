@@ -53,6 +53,11 @@ jobs:
           enable-cache: true
           cache-dependency-glob: frame-labeler/uv.lock
 
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libegl1
+
       - name: Install locked dependencies
         run: uv sync --locked --all-groups
 
