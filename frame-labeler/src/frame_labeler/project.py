@@ -244,11 +244,7 @@ class AnnotationProject:
 
         previous_boxes: tuple[Box, ...] = ()
         if previous_index is not None:
-            previous = self._connection.execute(
-                "SELECT state FROM frames WHERE source_index = ?", (previous_index,)
-            ).fetchone()
-            if previous is not None and previous["state"] == ReviewState.REVIEWED.value:
-                previous_boxes = self.get_boxes(previous_index)
+            previous_boxes = self.get_boxes(previous_index)
 
         state = ReviewState.DRAFT if previous_boxes else ReviewState.UNREVIEWED
         now = _utc_now()

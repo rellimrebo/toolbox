@@ -37,7 +37,7 @@ uv run frame-labeler open /path/to/video.mp4 \
 
 The project database is the canonical annotation state and saves each change automatically.
 A new project's first image or sampled frame starts with no boxes. New forward frames receive
-boxes only from the immediately preceding reviewed frame; reopening a project restores its saved
+boxes from the immediately preceding frame; reopening a project restores its saved
 annotations.
 
 ## Controls
@@ -54,7 +54,7 @@ annotations.
 - Use F to fit the image.
 - Use the platform undo and redo shortcuts for box edits.
 
-Boxes copied from the preceding reviewed frame use a dashed outline and remain drafts until the current frame is marked reviewed.
+Boxes copied from the preceding frame use a dashed outline and remain drafts until the current frame is marked reviewed.
 
 ## Export
 
