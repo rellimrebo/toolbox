@@ -5,6 +5,7 @@ GEMINI*.md
 .agent/
 .agents/
 .codex/
+frame-labeler/REQUIREMENTS.md
 
 # Local configuration and secrets
 .env
