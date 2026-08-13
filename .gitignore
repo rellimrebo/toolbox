@@ -1,0 +1,42 @@
+# Agent-only instructions, configuration, and working state
+AGENTS*.md
+CLAUDE*.md
+GEMINI*.md
+.agent/
+.agents/
+.codex/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.local
+.local/
+
+# Operating-system and editor files
+.DS_Store
+.idea/
+.vscode/
+*~
+
+# Generated and machine-local data
+artifacts/
+data/
+datasets/
+models/
+outputs/
+
+# Common caches and build output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+.venv/
+.coverage
+htmlcov/
+node_modules/
+coverage/
+dist/
+build/
