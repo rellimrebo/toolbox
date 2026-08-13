@@ -20,11 +20,12 @@ import (
 
 const usage = `Usage: label-preview IMAGE [options]
 
-Render a YOLO-labeled PNG, JPEG, or GIF as a compact terminal preview.
+Render an image from a recognized labeled dataset as a compact terminal preview.
+
+Dataset formats are detected from their standard layout:
+  YOLO detection, COCO detection JSON, and Pascal VOC XML.
 
 Options:
-  --labels PATH       YOLO label file; inferred from images/<split>/ by default
-  --classes PATH      dataset.yaml or one-name-per-line text file
   --width CELLS       maximum image width (default: available terminal width)
   --max-height ROWS   maximum image height (default: available terminal height)
   --color MODE        auto, always, or never (default: auto)
@@ -32,12 +33,10 @@ Options:
 `
 
 type options struct {
-	imagePath   string
-	labelsPath  string
-	classesPath string
-	width       int
-	maxHeight   int
-	color       string
+	imagePath string
+	width     int
+	maxHeight int
+	color     string
 }
 
 func optionValue(arguments []string, index *int, name string) (string, error) {
@@ -70,18 +69,6 @@ func parseArguments(arguments []string) (options, bool, error) {
 		switch {
 		case argument == "-h" || argument == "--help":
 			return result, true, nil
-		case argument == "--labels" || strings.HasPrefix(argument, "--labels="):
-			value, err := optionValue(arguments, &index, "--labels")
-			if err != nil {
-				return result, false, err
-			}
-			result.labelsPath = value
-		case argument == "--classes" || strings.HasPrefix(argument, "--classes="):
-			value, err := optionValue(arguments, &index, "--classes")
-			if err != nil {
-				return result, false, err
-			}
-			result.classesPath = value
 		case argument == "--width" || strings.HasPrefix(argument, "--width="):
 			value, err := optionValue(arguments, &index, "--width")
 			if err != nil {
@@ -166,23 +153,7 @@ func run(arguments []string, output io.Writer) error {
 		options.maxHeight = max(1, terminalHeight-2)
 	}
 
-	inputs, err := dataset.DiscoverInputs(
-		options.imagePath,
-		options.labelsPath,
-		options.classesPath,
-	)
-	if err != nil {
-		return err
-	}
-	var boxes []dataset.Box
-	if inputs.LabelsPath != "" {
-		boxes, err = dataset.LoadYOLOBoxes(inputs.LabelsPath, inputs.Classes)
-		if err != nil {
-			return err
-		}
-
-	}
-	imageFile, err := os.Open(inputs.ImagePath)
+	imageFile, err := os.Open(options.imagePath)
 	if err != nil {
 		return fmt.Errorf("open image: %w", err)
 	}
@@ -191,9 +162,14 @@ func run(arguments []string, output io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("decode image: %w", err)
 	}
+	bounds := decoded.Bounds()
+	annotations, err := dataset.LoadAnnotations(options.imagePath, bounds.Dx(), bounds.Dy())
+	if err != nil {
+		return err
+	}
 	preview, err := render.Render(
 		decoded,
-		boxes,
+		annotations.Boxes,
 		options.width,
 		options.maxHeight,
 		useColor(options.color, output),

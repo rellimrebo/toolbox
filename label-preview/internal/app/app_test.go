@@ -11,9 +11,12 @@ import (
 	"testing"
 )
 
-func TestCLIRendersExplicitYOLOSampleWithoutColor(t *testing.T) {
+func TestCLIRendersYOLOSampleWithoutColor(t *testing.T) {
 	root := t.TempDir()
-	imagePath := filepath.Join(root, "dog.png")
+	imagePath := filepath.Join(root, "images", "train", "dog.png")
+	if err := os.MkdirAll(filepath.Dir(imagePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	file, err := os.Create(imagePath)
 	if err != nil {
 		t.Fatal(err)
@@ -30,12 +33,14 @@ func TestCLIRendersExplicitYOLOSampleWithoutColor(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	labelsPath := filepath.Join(root, "dog.txt")
+	labelsPath := filepath.Join(root, "labels", "train", "dog.txt")
+	if err := os.MkdirAll(filepath.Dir(labelsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(labelsPath, []byte("0 0.5 0.5 0.5 0.5\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	classesPath := filepath.Join(root, "classes.txt")
-	if err := os.WriteFile(classesPath, []byte("dog\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "dataset.yaml"), []byte("names: [dog]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -43,8 +48,6 @@ func TestCLIRendersExplicitYOLOSampleWithoutColor(t *testing.T) {
 	var stderr bytes.Buffer
 	exitCode := Run([]string{
 		imagePath,
-		"--labels", labelsPath,
-		"--classes", classesPath,
 		"--width", "20",
 		"--max-height", "10",
 		"--color", "never",
@@ -71,6 +74,20 @@ func TestCLIReportsMissingImage(t *testing.T) {
 		t.Fatalf("exit code = %d, want 2", exitCode)
 	}
 	if !strings.Contains(stderr.String(), "an image path is required") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestCLIRejectsManualAnnotationPaths(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := Run([]string{"image.jpg", "--labels", "labels.txt"}, &stdout, &stderr)
+
+	if exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "unknown option: --labels") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }

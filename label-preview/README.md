@@ -1,9 +1,9 @@
 # Label Preview
 
-`label-preview` is a small Go CLI that renders a YOLO-labeled image as a terminal image with
-class-colored bounding boxes. It is meant for quick dataset spot checks and novelty previews,
-not precise annotation review. The compiled executable is self-contained and does not require a
-Go runtime on the target machine.
+`label-preview` is a small Go CLI that renders an image from a labeled dataset as a terminal
+image with class-colored bounding boxes. It is meant for quick dataset spot checks and novelty
+previews, not precise annotation review. The compiled executable is self-contained and does not
+require a Go runtime on the target machine.
 
 The renderer uses Unicode half blocks so each terminal row carries two vertical image samples.
 This keeps the result close to the source aspect ratio on terminals whose character cells are
@@ -21,35 +21,36 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
 
 ## Usage
 
-For a standard YOLO dataset, pass an image. The matching `labels/<split>/<name>.txt` and the
-nearest `dataset.yaml` are discovered automatically:
+Pass an image from a supported dataset. Its format, annotation file, and class names are inferred
+from the standard dataset layout:
 
 ```shell
 ./bin/label-preview /path/to/dataset/images/train/example.png
 ```
 
-For another directory layout, provide the files explicitly:
+Supported detection layouts:
 
-```shell
-./bin/label-preview /path/to/example.jpg \
-  --labels /path/to/example.txt \
-  --classes /path/to/classes.txt
-```
+- YOLO: `images/<split>/name.jpg` with `labels/<split>/name.txt`, or
+  `<split>/images/name.jpg` with `<split>/labels/name.txt`; class names come from `dataset.yaml`,
+  `data.yaml`, or their `.yml` variants.
+- COCO: `<split>/name.jpg` with `annotations/instances_<split>.json`, including the common
+  `images/<split>/` variant; Roboflow-style `_annotations.coco.json` beside the image also works.
+- Pascal VOC: `JPEGImages/name.jpg` with `Annotations/name.xml`, or `name.xml` beside the image.
 
-`--classes` accepts a YOLO `dataset.yaml` or a UTF-8 text file with one class name per line.
-Images without a matching label file render normally with no boxes. Unknown class IDs use the
-numeric ID as their label.
+The tool deliberately has no annotation-path or format flags. An image outside a recognized
+layout is rejected rather than guessed. In a recognized YOLO dataset, a missing label file is a
+valid empty sample. Unknown numeric class IDs use the ID as their label.
 
 Useful sizing and output controls:
 
 ```shell
-./bin/label-preview /path/to/example.jpg \
+./bin/label-preview /path/to/dataset/images/train/example.jpg \
   --width 64 \
   --max-height 24 \
   --color always
 ```
 
-The supported annotation rows are YOLO detection boxes:
+YOLO detection rows use the usual normalized representation:
 
 ```text
 class_id center_x center_y width height

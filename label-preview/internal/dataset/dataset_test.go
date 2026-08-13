@@ -3,7 +3,6 @@ package dataset
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -18,119 +17,225 @@ func writeFile(t *testing.T, path string, contents string) {
 	}
 }
 
-func TestDiscoversFrameLabelerYOLOExport(t *testing.T) {
+func TestLoadsStandardYOLODataset(t *testing.T) {
 	root := t.TempDir()
 	image := filepath.Join(root, "images", "train", "dog.png")
 	writeFile(t, image, "")
-	label := filepath.Join(root, "labels", "train", "dog.txt")
-	writeFile(t, label, "1 0.5 0.5 0.4 0.6\n")
+	writeFile(t, filepath.Join(root, "labels", "train", "dog.txt"), "1 0.5 0.5 0.4 0.6\n")
 	writeFile(t, filepath.Join(root, "dataset.yaml"), "names:\n  0: \"cat\"\n  1: \"dog\"\n")
 
-	inputs, err := DiscoverInputs(image, "", "")
+	annotations, err := LoadAnnotations(image, 100, 80)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inputs.ImagePath != image {
-		t.Fatalf("image path = %q, want %q", inputs.ImagePath, image)
+	if annotations.Format != FormatYOLO {
+		t.Fatalf("format = %q, want %q", annotations.Format, FormatYOLO)
 	}
-	if inputs.LabelsPath != label {
-		t.Fatalf("label path = %q, want %q", inputs.LabelsPath, label)
+	if len(annotations.Boxes) != 1 {
+		t.Fatalf("box count = %d, want 1", len(annotations.Boxes))
 	}
-	wantClasses := map[int]string{0: "cat", 1: "dog"}
-	if !reflect.DeepEqual(inputs.Classes, wantClasses) {
-		t.Fatalf("classes = %#v, want %#v", inputs.Classes, wantClasses)
+	box := annotations.Boxes[0]
+	if box.Label != "dog" || !closeEnough(box.XMin, 0.3) || !closeEnough(box.YMin, 0.2) ||
+		!closeEnough(box.XMax, 0.7) || !closeEnough(box.YMax, 0.8) {
+		t.Fatalf("unexpected box: %#v", box)
 	}
 }
 
-func TestMissingImplicitLabelRepresentsEmptySample(t *testing.T) {
+func TestLoadsSplitFirstYOLODatasetWithDataYAML(t *testing.T) {
+	root := t.TempDir()
+	image := filepath.Join(root, "train", "images", "dog.jpg")
+	writeFile(t, image, "")
+	writeFile(t, filepath.Join(root, "train", "labels", "dog.txt"), "0 0.5 0.5 1 1\n")
+	writeFile(t, filepath.Join(root, "data.yaml"), "names: [dog]\n")
+
+	annotations, err := LoadAnnotations(image, 100, 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if annotations.Format != FormatYOLO || len(annotations.Boxes) != 1 ||
+		annotations.Boxes[0].Label != "dog" {
+		t.Fatalf("unexpected annotations: %#v", annotations)
+	}
+}
+
+func TestLoadsYOLOIndentlessClassSequence(t *testing.T) {
+	root := t.TempDir()
+	image := filepath.Join(root, "images", "test", "dog.jpg")
+	writeFile(t, image, "")
+	writeFile(t, filepath.Join(root, "labels", "test", "dog.txt"), "1 0.5 0.5 1 1\n")
+	writeFile(t, filepath.Join(root, "data.yaml"), "names:\n- cat\n- dog\n")
+
+	annotations, err := LoadAnnotations(image, 100, 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(annotations.Boxes) != 1 || annotations.Boxes[0].Label != "dog" {
+		t.Fatalf("unexpected annotations: %#v", annotations)
+	}
+}
+
+func TestMissingYOLOLabelRepresentsEmptySample(t *testing.T) {
 	root := t.TempDir()
 	image := filepath.Join(root, "images", "val", "empty.png")
 	writeFile(t, image, "")
 	writeFile(t, filepath.Join(root, "dataset.yaml"), "names: [cat, dog]\n")
 
-	inputs, err := DiscoverInputs(image, "", "")
+	annotations, err := LoadAnnotations(image, 100, 80)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inputs.LabelsPath != "" {
-		t.Fatalf("label path = %q, want empty", inputs.LabelsPath)
-	}
-	wantClasses := map[int]string{0: "cat", 1: "dog"}
-	if !reflect.DeepEqual(inputs.Classes, wantClasses) {
-		t.Fatalf("classes = %#v, want %#v", inputs.Classes, wantClasses)
+	if annotations.Format != FormatYOLO || len(annotations.Boxes) != 0 {
+		t.Fatalf("unexpected annotations: %#v", annotations)
 	}
 }
 
-func TestExplicitTextClassesAndLabels(t *testing.T) {
+func TestLoadsStandardCOCODetectionDataset(t *testing.T) {
 	root := t.TempDir()
-	image := filepath.Join(root, "photo.jpg")
+	image := filepath.Join(root, "train2017", "cat.jpg")
 	writeFile(t, image, "")
-	labels := filepath.Join(root, "annotations.txt")
-	writeFile(t, labels, "0 0.5 0.5 1 1\n")
-	classes := filepath.Join(root, "classes.txt")
-	writeFile(t, classes, "dog\ncar\n")
+	writeFile(t, filepath.Join(root, "annotations", "instances_train2017.json"), `{
+  "images": [{"id": 7, "file_name": "cat.jpg", "width": 200, "height": 100}],
+  "annotations": [{"id": 10, "image_id": 7, "category_id": 3, "bbox": [20, 10, 40, 50]}],
+  "categories": [{"id": 3, "name": "cat"}]
+}`)
 
-	inputs, err := DiscoverInputs(image, labels, classes)
+	annotations, err := LoadAnnotations(image, 200, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inputs.LabelsPath != labels {
-		t.Fatalf("label path = %q, want %q", inputs.LabelsPath, labels)
+	if annotations.Format != FormatCOCO || len(annotations.Boxes) != 1 {
+		t.Fatalf("unexpected annotations: %#v", annotations)
 	}
-	wantClasses := map[int]string{0: "dog", 1: "car"}
-	if !reflect.DeepEqual(inputs.Classes, wantClasses) {
-		t.Fatalf("classes = %#v, want %#v", inputs.Classes, wantClasses)
-	}
-}
-
-func TestLoadsAndNamesNormalizedYOLOBoxes(t *testing.T) {
-	labels := filepath.Join(t.TempDir(), "labels.txt")
-	writeFile(t, labels, "2 0.25 0.75 0.2 0.4\n")
-
-	boxes, err := LoadYOLOBoxes(labels, map[int]string{2: "car"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(boxes) != 1 {
-		t.Fatalf("box count = %d, want 1", len(boxes))
-	}
-	box := boxes[0]
-	if box.Label != "car" || box.XMin != 0.15 || box.YMin != 0.55 ||
-		box.XMax != 0.35 || box.YMax != 0.95 {
+	box := annotations.Boxes[0]
+	if box.Label != "cat" || !closeEnough(box.XMin, 0.1) || !closeEnough(box.YMin, 0.1) ||
+		!closeEnough(box.XMax, 0.3) || !closeEnough(box.YMax, 0.6) {
 		t.Fatalf("unexpected box: %#v", box)
 	}
 }
 
-func TestRejectsInvalidYOLORows(t *testing.T) {
-	tests := []struct {
-		name     string
-		contents string
-		message  string
-	}{
-		{"class", "dog 0.5 0.5 0.2 0.2\n", "class id"},
-		{"fields", "0 0.5 0.5 0.2\n", "five fields"},
-		{"range", "0 1.5 0.5 0.2 0.2\n", "between 0 and 1"},
-		{"size", "0 0.5 0.5 0 0.2\n", "greater than zero"},
+func TestLoadsRoboflowStyleCOCODataset(t *testing.T) {
+	root := t.TempDir()
+	image := filepath.Join(root, "train", "car.jpg")
+	writeFile(t, image, "")
+	writeFile(t, filepath.Join(root, "train", "_annotations.coco.json"), `{
+  "images": [{"id": 2, "file_name": "car.jpg", "width": 40, "height": 20}],
+  "annotations": [{"image_id": 2, "category_id": 1, "bbox": [4, 2, 20, 10]}],
+  "categories": [{"id": 1, "name": "car"}]
+}`)
+
+	annotations, err := LoadAnnotations(image, 40, 20)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			labels := filepath.Join(t.TempDir(), "labels.txt")
-			writeFile(t, labels, test.contents)
-			_, err := LoadYOLOBoxes(labels, nil)
-			if err == nil || !strings.Contains(err.Error(), test.message) {
-				t.Fatalf("error = %v, want message containing %q", err, test.message)
-			}
-		})
+	if annotations.Format != FormatCOCO || len(annotations.Boxes) != 1 ||
+		annotations.Boxes[0].Label != "car" {
+		t.Fatalf("unexpected annotations: %#v", annotations)
+	}
+}
+
+func TestLoadsCOCOWhenAnnotationsPrecedeImages(t *testing.T) {
+	root := t.TempDir()
+	image := filepath.Join(root, "train2017", "cat.jpg")
+	writeFile(t, image, "")
+	writeFile(t, filepath.Join(root, "annotations", "instances_train2017.json"), `{
+  "annotations": [{"image_id": 7, "category_id": 3, "bbox": [20, 10, 40, 50]}],
+  "categories": [{"id": 3, "name": "cat"}],
+  "images": [{"id": 7, "file_name": "cat.jpg", "width": 200, "height": 100}]
+}`)
+
+	annotations, err := LoadAnnotations(image, 200, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if annotations.Format != FormatCOCO || len(annotations.Boxes) != 1 ||
+		annotations.Boxes[0].Label != "cat" {
+		t.Fatalf("unexpected annotations: %#v", annotations)
+	}
+}
+
+func TestLoadsStandardPascalVOCDataset(t *testing.T) {
+	root := t.TempDir()
+	image := filepath.Join(root, "JPEGImages", "dog.jpg")
+	writeFile(t, image, "")
+	writeFile(t, filepath.Join(root, "Annotations", "dog.xml"), `<annotation>
+  <filename>dog.jpg</filename>
+  <size><width>100</width><height>80</height></size>
+  <object><name>dog</name><bndbox><xmin>10</xmin><ymin>20</ymin><xmax>60</xmax><ymax>70</ymax></bndbox></object>
+</annotation>`)
+
+	annotations, err := LoadAnnotations(image, 100, 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if annotations.Format != FormatPascalVOC || len(annotations.Boxes) != 1 {
+		t.Fatalf("unexpected annotations: %#v", annotations)
+	}
+	box := annotations.Boxes[0]
+	if box.Label != "dog" || !closeEnough(box.XMin, 0.1) || !closeEnough(box.YMin, 0.25) ||
+		!closeEnough(box.XMax, 0.6) || !closeEnough(box.YMax, 0.875) {
+		t.Fatalf("unexpected box: %#v", box)
+	}
+}
+
+func TestLoadsPascalVOCXMLBesideImage(t *testing.T) {
+	root := t.TempDir()
+	image := filepath.Join(root, "dog.jpg")
+	writeFile(t, image, "")
+	writeFile(t, filepath.Join(root, "dog.xml"), `<annotation>
+  <object><name>dog</name><bndbox><xmin>0</xmin><ymin>0</ymin><xmax>10</xmax><ymax>10</ymax></bndbox></object>
+</annotation>`)
+
+	annotations, err := LoadAnnotations(image, 10, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if annotations.Format != FormatPascalVOC || len(annotations.Boxes) != 1 {
+		t.Fatalf("unexpected annotations: %#v", annotations)
+	}
+}
+
+func TestRejectsImageOutsideRecognizedDataset(t *testing.T) {
+	root := t.TempDir()
+	image := filepath.Join(root, "photo.jpg")
+	writeFile(t, image, "")
+	writeFile(t, filepath.Join(root, "photo.txt"), "0 0.5 0.5 1 1\n")
+	writeFile(t, filepath.Join(root, "classes.txt"), "dog\n")
+
+	_, err := LoadAnnotations(image, 100, 80)
+
+	if err == nil || !strings.Contains(err.Error(), "recognized dataset layout") {
+		t.Fatalf("error = %v, want layout error", err)
+	}
+}
+
+func TestRejectsInvalidYOLOBoxes(t *testing.T) {
+	root := t.TempDir()
+	image := filepath.Join(root, "images", "train", "dog.png")
+	writeFile(t, image, "")
+	writeFile(t, filepath.Join(root, "labels", "train", "dog.txt"), "0 1.5 0.5 0.2 0.2\n")
+	writeFile(t, filepath.Join(root, "dataset.yaml"), "names: [dog]\n")
+
+	_, err := LoadAnnotations(image, 100, 80)
+
+	if err == nil || !strings.Contains(err.Error(), "between 0 and 1") {
+		t.Fatalf("error = %v, want coordinate error", err)
 	}
 }
 
 func TestRejectsTerminalControlCharactersInClassNames(t *testing.T) {
-	classes := filepath.Join(t.TempDir(), "dataset.yaml")
-	writeFile(t, classes, "names:\n  0: \"dog\\u001b[2J\"\n")
+	root := t.TempDir()
+	image := filepath.Join(root, "images", "train", "dog.png")
+	writeFile(t, image, "")
+	writeFile(t, filepath.Join(root, "dataset.yaml"), "names:\n  0: \"dog\\u001b[2J\"\n")
 
-	_, err := LoadClasses(classes)
+	_, err := LoadAnnotations(image, 100, 80)
 
 	if err == nil || !strings.Contains(err.Error(), "control characters") {
 		t.Fatalf("error = %v, want control-character rejection", err)
 	}
+}
+
+func closeEnough(actual float64, expected float64) bool {
+	difference := actual - expected
+	return difference > -1e-9 && difference < 1e-9
 }
