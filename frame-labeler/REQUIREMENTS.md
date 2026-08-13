@@ -72,6 +72,7 @@ frame-labeler export PROJECT --format yolo --output DIRECTORY
 - Editing a copied box never changes the preceding frame.
 - Draft boxes are not exportable until the user marks the frame reviewed.
 - Existing annotations on a revisited frame are never overwritten by carry-forward behavior.
+- An existing empty `unreviewed` frame may receive boxes when revisited from its immediately preceding frame; empty `draft` and `reviewed` frames are treated as intentional work and remain empty.
 - A reviewed frame may intentionally contain zero boxes.
 
 ### FR-5: Review and save behavior

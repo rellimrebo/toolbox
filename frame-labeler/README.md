@@ -40,6 +40,9 @@ A new project's first image or sampled frame starts with no boxes. New forward f
 boxes from the immediately preceding frame; reopening a project restores its saved
 annotations.
 
+An empty unreviewed frame may receive boxes when revisited from its preceding frame. Draft and
+reviewed frames are treated as intentional work and are never repopulated automatically.
+
 ## Controls
 
 - Drag empty image space to create a box with the active class.
