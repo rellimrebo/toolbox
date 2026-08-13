@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from PIL import Image
 
-from frame_labeler.domain import BoxOrigin
+from frame_labeler.domain import AnnotationOrigin
 from frame_labeler.inference import (
     OBJECT_DETECTION_OUTPUT,
     Detection,
@@ -43,7 +43,7 @@ def test_provider_detections_become_clipped_source_pixel_boxes() -> None:
         (0.0, 10.0, 40.0, 60.0),
         (50.0, 20.0, 100.0, 70.0),
     ]
-    assert all(box.origin is BoxOrigin.INFERRED for box in boxes)
+    assert all(box.origin is AnnotationOrigin.INFERRED for box in boxes)
     assert all(box.inference_provider == "stub-detector/v1" for box in boxes)
     assert [box.confidence for box in boxes] == [0.9, 0.75]
     assert len({box.id for box in boxes}) == 2

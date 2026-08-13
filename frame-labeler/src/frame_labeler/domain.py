@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 
 
-class BoxOrigin(StrEnum):
+class AnnotationOrigin(StrEnum):
     MANUAL = "manual"
     COPIED = "copied"
     INFERRED = "inferred"
@@ -25,7 +25,7 @@ class Box:
     y_min: float
     x_max: float
     y_max: float
-    origin: BoxOrigin
+    origin: AnnotationOrigin
     source_box_id: str | None = None
     inference_provider: str | None = None
     confidence: float | None = None
@@ -45,9 +45,9 @@ class Box:
             raise ValueError("Inference provider must be a non-empty, single-line identifier")
         if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
             raise ValueError("Inference confidence must be between zero and one")
-        if self.origin is BoxOrigin.INFERRED and self.inference_provider is None:
+        if self.origin is AnnotationOrigin.INFERRED and self.inference_provider is None:
             raise ValueError("Inferred boxes must identify their inference provider")
-        if self.origin is BoxOrigin.MANUAL and (
+        if self.origin is AnnotationOrigin.MANUAL and (
             self.inference_provider is not None or self.confidence is not None
         ):
             raise ValueError("Manual boxes cannot contain inference provenance")
@@ -70,48 +70,6 @@ class Box:
 
     def with_class(self, class_id: int) -> Box:
         return replace(self, class_id=class_id)
-
-    def to_yolo(
-        self, image_width: int, image_height: int
-    ) -> tuple[int, float, float, float, float]:
-        if image_width <= 0 or image_height <= 0:
-            raise ValueError("Image dimensions must be greater than zero")
-        width = self.x_max - self.x_min
-        height = self.y_max - self.y_min
-        return (
-            self.class_id,
-            (self.x_min + width / 2.0) / image_width,
-            (self.y_min + height / 2.0) / image_height,
-            width / image_width,
-            height / image_height,
-        )
-
-    @classmethod
-    def from_yolo(
-        cls,
-        box_id: str,
-        class_id: int,
-        center_x: float,
-        center_y: float,
-        width: float,
-        height: float,
-        image_width: int,
-        image_height: int,
-        origin: BoxOrigin = BoxOrigin.MANUAL,
-    ) -> Box:
-        pixel_width = width * image_width
-        pixel_height = height * image_height
-        pixel_center_x = center_x * image_width
-        pixel_center_y = center_y * image_height
-        return cls(
-            box_id,
-            class_id,
-            pixel_center_x - pixel_width / 2.0,
-            pixel_center_y - pixel_height / 2.0,
-            pixel_center_x + pixel_width / 2.0,
-            pixel_center_y + pixel_height / 2.0,
-            origin,
-        )
 
 
 @dataclass(frozen=True, slots=True)

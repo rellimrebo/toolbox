@@ -74,6 +74,11 @@ empty unreviewed frame. This method never overwrites existing boxes or an intent
 draft or reviewed frame. Concrete model runtimes, result caching, and GUI scheduling remain
 separate from the core package.
 
+Frame creation and review state are independent of detection policy. Box carry-forward,
+inference seeding, and YOLO conversion are explicit detection operations. Additional annotation
+domains should add typed domain records and persistence methods instead of expanding `Box` or
+storing opaque annotation payloads.
+
 ## Export
 
 Only reviewed frames are exported:

@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from frame_labeler.domain import Box, BoxOrigin, FrameRecord, ReviewState
+from frame_labeler.domain import AnnotationOrigin, Box, FrameRecord, ReviewState
 
 SCHEMA_VERSION = 2
 
@@ -276,7 +276,6 @@ class AnnotationProject:
         timestamp_seconds: float,
         width: int,
         height: int,
-        previous_index: int | None = None,
     ) -> FrameRecord:
         if index < 0 or timestamp_seconds < 0 or width <= 0 or height <= 0:
             raise ValueError("Invalid frame metadata")
@@ -287,28 +286,8 @@ class AnnotationProject:
             frame = self._frame_from_row(existing)
             if (frame.width, frame.height) != (width, height):
                 raise ProjectError("Stored frame dimensions do not match decoded media")
-            if (
-                previous_index is not None
-                and frame.state is ReviewState.UNREVIEWED
-                and not self.get_boxes(index)
-            ):
-                boxes_to_carry = self.get_boxes(previous_index)
-                if boxes_to_carry:
-                    now = _utc_now()
-                    with self._connection:
-                        self._insert_copied_boxes(index, boxes_to_carry, now)
-                        self._connection.execute(
-                            "UPDATE frames SET state = ?, updated_at = ? WHERE source_index = ?",
-                            (ReviewState.DRAFT.value, now, index),
-                        )
-                    return self.get_frame(index)
             return frame
 
-        previous_boxes: tuple[Box, ...] = ()
-        if previous_index is not None:
-            previous_boxes = self.get_boxes(previous_index)
-
-        state = ReviewState.DRAFT if previous_boxes else ReviewState.UNREVIEWED
         now = _utc_now()
         with self._connection:
             self._connection.execute(
@@ -318,10 +297,52 @@ class AnnotationProject:
                     reviewed_at, created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
                 """,
-                (index, timestamp_seconds, width, height, state.value, now, now),
+                (
+                    index,
+                    timestamp_seconds,
+                    width,
+                    height,
+                    ReviewState.UNREVIEWED.value,
+                    now,
+                    now,
+                ),
             )
-            self._insert_copied_boxes(index, previous_boxes, now)
         return self.get_frame(index)
+
+    def carry_forward_boxes(self, source_frame_index: int, target_frame_index: int) -> bool:
+        if target_frame_index - source_frame_index != self.stride:
+            raise ValueError("Box carry-forward requires consecutive sampled frames")
+        self.get_frame(source_frame_index)
+        self.get_frame(target_frame_index)
+        now = _utc_now()
+        with self._connection:
+            claimed = self._connection.execute(
+                """
+                UPDATE frames
+                SET state = ?, reviewed_at = NULL, updated_at = ?
+                WHERE source_index = ?
+                  AND state = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM boxes WHERE frame_index = ?
+                  )
+                  AND EXISTS (
+                      SELECT 1 FROM boxes WHERE frame_index = ?
+                  )
+                """,
+                (
+                    ReviewState.DRAFT.value,
+                    now,
+                    target_frame_index,
+                    ReviewState.UNREVIEWED.value,
+                    target_frame_index,
+                    source_frame_index,
+                ),
+            )
+            if claimed.rowcount != 1:
+                return False
+            source_boxes = self.get_boxes(source_frame_index)
+            self._insert_copied_boxes(target_frame_index, source_boxes, now)
+        return True
 
     def _insert_copied_boxes(self, frame_index: int, boxes: Sequence[Box], now: str) -> None:
         for box in boxes:
@@ -329,7 +350,7 @@ class AnnotationProject:
                 str(uuid.uuid4()),
                 box.class_id,
                 *box.coordinates,
-                BoxOrigin.COPIED,
+                AnnotationOrigin.COPIED,
                 source_box_id=box.id,
                 inference_provider=box.inference_provider,
                 confidence=box.confidence,
@@ -376,7 +397,7 @@ class AnnotationProject:
                 y_min=float(row["y_min"]),
                 x_max=float(row["x_max"]),
                 y_max=float(row["y_max"]),
-                origin=BoxOrigin(str(row["origin"])),
+                origin=AnnotationOrigin(str(row["origin"])),
                 source_box_id=(
                     str(row["source_box_id"]) if row["source_box_id"] is not None else None
                 ),
@@ -392,16 +413,12 @@ class AnnotationProject:
 
     def replace_boxes(self, frame_index: int, boxes: Sequence[Box]) -> None:
         frame = self.get_frame(frame_index)
-        class_count = len(self.class_names)
-        for box in boxes:
-            if box.class_id >= class_count:
-                raise ValueError(f"Unknown class ID: {box.class_id}")
-            box.clipped(frame.width, frame.height)
+        prepared = self._prepare_boxes(frame, boxes)
         now = _utc_now()
         with self._connection:
             self._connection.execute("DELETE FROM boxes WHERE frame_index = ?", (frame_index,))
-            for box in boxes:
-                self._insert_box(frame_index, box.clipped(frame.width, frame.height), now)
+            for box in prepared:
+                self._insert_box(frame_index, box, now)
             self._connection.execute(
                 """
                 UPDATE frames
@@ -411,15 +428,46 @@ class AnnotationProject:
                 (ReviewState.DRAFT.value, now, frame_index),
             )
 
+    def _prepare_boxes(self, frame: FrameRecord, boxes: Sequence[Box]) -> tuple[Box, ...]:
+        class_count = len(self.class_names)
+        prepared: list[Box] = []
+        for box in boxes:
+            if box.class_id >= class_count:
+                raise ValueError(f"Unknown class ID: {box.class_id}")
+            prepared.append(box.clipped(frame.width, frame.height))
+        return tuple(prepared)
+
     def seed_inferred_boxes(self, frame_index: int, boxes: Sequence[Box]) -> bool:
         if not boxes:
             return False
-        if any(box.origin is not BoxOrigin.INFERRED for box in boxes):
+        if any(box.origin is not AnnotationOrigin.INFERRED for box in boxes):
             raise ValueError("Inference seeding accepts only inferred boxes")
         frame = self.get_frame(frame_index)
-        if frame.state is not ReviewState.UNREVIEWED or self.get_boxes(frame_index):
-            return False
-        self.replace_boxes(frame_index, boxes)
+        prepared = self._prepare_boxes(frame, boxes)
+        now = _utc_now()
+        with self._connection:
+            claimed = self._connection.execute(
+                """
+                UPDATE frames
+                SET state = ?, reviewed_at = NULL, updated_at = ?
+                WHERE source_index = ?
+                  AND state = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM boxes WHERE frame_index = ?
+                  )
+                """,
+                (
+                    ReviewState.DRAFT.value,
+                    now,
+                    frame_index,
+                    ReviewState.UNREVIEWED.value,
+                    frame_index,
+                ),
+            )
+            if claimed.rowcount != 1:
+                return False
+            for box in prepared:
+                self._insert_box(frame_index, box, now)
         return True
 
     def _insert_box(self, frame_index: int, box: Box, now: str) -> None:

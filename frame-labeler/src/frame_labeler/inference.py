@@ -8,7 +8,7 @@ from typing import Generic, Protocol, TypeVar
 
 from PIL import Image
 
-from frame_labeler.domain import Box, BoxOrigin
+from frame_labeler.domain import AnnotationOrigin, Box
 from frame_labeler.media import MediaFrame
 
 
@@ -141,7 +141,7 @@ def detections_to_boxes(
                 y_min=y_min,
                 x_max=x_max,
                 y_max=y_max,
-                origin=BoxOrigin.INFERRED,
+                origin=AnnotationOrigin.INFERRED,
                 inference_provider=result.provider_id,
                 confidence=detection.confidence,
             )

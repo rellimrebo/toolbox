@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from frame_labeler.domain import Box, BoxOrigin, ReviewState
+from frame_labeler.domain import AnnotationOrigin, Box, ReviewState
 from frame_labeler.project import AnnotationProject, SourceMismatchError
 
 
@@ -26,7 +26,7 @@ def test_project_persists_classes_frame_state_and_boxes(tmp_path: Path, source: 
         split="train",
     )
     frame = project.ensure_frame(0, timestamp_seconds=0.0, width=1920, height=1080)
-    box = Box("box-1", 1, 10.0, 20.0, 110.0, 220.0, BoxOrigin.MANUAL)
+    box = Box("box-1", 1, 10.0, 20.0, 110.0, 220.0, AnnotationOrigin.MANUAL)
     project.replace_boxes(frame.index, [box])
     project.mark_reviewed(frame.index)
     project.last_frame_index = frame.index
@@ -50,22 +50,18 @@ def test_forward_navigation_copies_reviewed_boxes_as_independent_drafts(
         tmp_path / "labels.sqlite3", source, class_names=["person"], stride=3
     )
     project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
-    original = Box("box-1", 0, 10.0, 12.0, 30.0, 42.0, BoxOrigin.MANUAL)
+    original = Box("box-1", 0, 10.0, 12.0, 30.0, 42.0, AnnotationOrigin.MANUAL)
     project.replace_boxes(0, [original])
     project.mark_reviewed(0)
 
-    copied_frame = project.ensure_frame(
-        3,
-        timestamp_seconds=0.1,
-        width=100,
-        height=80,
-        previous_index=0,
-    )
+    project.ensure_frame(3, timestamp_seconds=0.1, width=100, height=80)
+    assert project.carry_forward_boxes(0, 3) is True
+    copied_frame = project.get_frame(3)
     copied_box = project.get_boxes(3)[0]
 
     assert copied_frame.state is ReviewState.DRAFT
     assert copied_box.id != original.id
-    assert copied_box.origin is BoxOrigin.COPIED
+    assert copied_box.origin is AnnotationOrigin.COPIED
     assert copied_box.source_box_id == original.id
     assert copied_box.coordinates == original.coordinates
 
@@ -80,21 +76,17 @@ def test_forward_navigation_copies_draft_boxes(tmp_path: Path, source: Path) -> 
         tmp_path / "labels.sqlite3", source, class_names=["person"], stride=3
     )
     project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
-    original = Box("box-1", 0, 10.0, 12.0, 30.0, 42.0, BoxOrigin.MANUAL)
+    original = Box("box-1", 0, 10.0, 12.0, 30.0, 42.0, AnnotationOrigin.MANUAL)
     project.replace_boxes(0, [original])
 
-    copied_frame = project.ensure_frame(
-        3,
-        timestamp_seconds=0.1,
-        width=100,
-        height=80,
-        previous_index=0,
-    )
+    project.ensure_frame(3, timestamp_seconds=0.1, width=100, height=80)
+    assert project.carry_forward_boxes(0, 3) is True
+    copied_frame = project.get_frame(3)
 
     assert project.get_frame(0).state is ReviewState.DRAFT
     assert copied_frame.state is ReviewState.DRAFT
     copied_box = project.get_boxes(3)[0]
-    assert copied_box.origin is BoxOrigin.COPIED
+    assert copied_box.origin is AnnotationOrigin.COPIED
     assert copied_box.source_box_id == original.id
     assert copied_box.coordinates == original.coordinates
     project.close()
@@ -106,20 +98,16 @@ def test_revisiting_empty_unreviewed_frame_carries_new_previous_boxes(
     project = AnnotationProject.create(tmp_path / "labels.sqlite3", source, class_names=["person"])
     project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
     project.ensure_frame(1, timestamp_seconds=0.1, width=100, height=80)
-    original = Box("box-1", 0, 10.0, 12.0, 30.0, 42.0, BoxOrigin.MANUAL)
+    original = Box("box-1", 0, 10.0, 12.0, 30.0, 42.0, AnnotationOrigin.MANUAL)
     project.replace_boxes(0, [original])
 
-    revisited = project.ensure_frame(
-        1,
-        timestamp_seconds=0.1,
-        width=100,
-        height=80,
-        previous_index=0,
-    )
+    project.ensure_frame(1, timestamp_seconds=0.1, width=100, height=80)
+    assert project.carry_forward_boxes(0, 1) is True
+    revisited = project.get_frame(1)
 
     assert revisited.state is ReviewState.DRAFT
     copied_box = project.get_boxes(1)[0]
-    assert copied_box.origin is BoxOrigin.COPIED
+    assert copied_box.origin is AnnotationOrigin.COPIED
     assert copied_box.source_box_id == original.id
     assert copied_box.coordinates == original.coordinates
     project.close()
@@ -134,16 +122,11 @@ def test_revisiting_intentionally_emptied_draft_does_not_restore_boxes(
     project.replace_boxes(1, [])
     project.replace_boxes(
         0,
-        [Box("box-1", 0, 10.0, 12.0, 30.0, 42.0, BoxOrigin.MANUAL)],
+        [Box("box-1", 0, 10.0, 12.0, 30.0, 42.0, AnnotationOrigin.MANUAL)],
     )
 
-    revisited = project.ensure_frame(
-        1,
-        timestamp_seconds=0.1,
-        width=100,
-        height=80,
-        previous_index=0,
-    )
+    assert project.carry_forward_boxes(0, 1) is False
+    revisited = project.get_frame(1)
 
     assert revisited.state is ReviewState.DRAFT
     assert project.get_boxes(1) == ()
@@ -159,16 +142,11 @@ def test_revisiting_reviewed_empty_frame_does_not_restore_boxes(
     project.mark_reviewed(1)
     project.replace_boxes(
         0,
-        [Box("box-1", 0, 10.0, 12.0, 30.0, 42.0, BoxOrigin.MANUAL)],
+        [Box("box-1", 0, 10.0, 12.0, 30.0, 42.0, AnnotationOrigin.MANUAL)],
     )
 
-    revisited = project.ensure_frame(
-        1,
-        timestamp_seconds=0.1,
-        width=100,
-        height=80,
-        previous_index=0,
-    )
+    assert project.carry_forward_boxes(0, 1) is False
+    revisited = project.get_frame(1)
 
     assert revisited.state is ReviewState.REVIEWED
     assert project.get_boxes(1) == ()
@@ -185,6 +163,59 @@ def test_first_frame_starts_empty_without_a_preceding_frame(tmp_path: Path, sour
     project.close()
 
 
+def test_frame_creation_does_not_apply_box_propagation_policy(tmp_path: Path, source: Path) -> None:
+    project = AnnotationProject.create(tmp_path / "labels.sqlite3", source, class_names=["person"])
+    project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
+    project.replace_boxes(
+        0,
+        [Box("box-1", 0, 10.0, 12.0, 30.0, 42.0, AnnotationOrigin.MANUAL)],
+    )
+
+    frame = project.ensure_frame(1, timestamp_seconds=0.1, width=100, height=80)
+
+    assert frame.state is ReviewState.UNREVIEWED
+    assert project.get_boxes(1) == ()
+    project.close()
+
+
+def test_box_carry_forward_requires_consecutive_sampled_frames(
+    tmp_path: Path, source: Path
+) -> None:
+    project = AnnotationProject.create(
+        tmp_path / "labels.sqlite3", source, class_names=["person"], stride=2
+    )
+    project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
+    project.ensure_frame(4, timestamp_seconds=0.2, width=100, height=80)
+
+    with pytest.raises(ValueError, match="consecutive sampled frames"):
+        project.carry_forward_boxes(0, 4)
+
+    project.close()
+
+
+def test_carry_forward_from_another_connection_does_not_overwrite_started_work(
+    tmp_path: Path, source: Path
+) -> None:
+    project_path = tmp_path / "labels.sqlite3"
+    editor = AnnotationProject.create(project_path, source, class_names=["person"])
+    editor.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
+    editor.replace_boxes(
+        0,
+        [Box("source-1", 0, 10.0, 12.0, 30.0, 42.0, AnnotationOrigin.MANUAL)],
+    )
+    editor.ensure_frame(1, timestamp_seconds=0.1, width=100, height=80)
+    worker = AnnotationProject.open(project_path, source)
+    editor.replace_boxes(
+        1,
+        [Box("manual-1", 0, 1.0, 2.0, 10.0, 12.0, AnnotationOrigin.MANUAL)],
+    )
+
+    assert worker.carry_forward_boxes(0, 1) is False
+    assert worker.get_boxes(1)[0].id == "manual-1"
+    worker.close()
+    editor.close()
+
+
 def test_inference_seeds_only_empty_unreviewed_frame(tmp_path: Path, source: Path) -> None:
     project = AnnotationProject.create(tmp_path / "labels.sqlite3", source, class_names=["person"])
     project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
@@ -195,7 +226,7 @@ def test_inference_seeds_only_empty_unreviewed_frame(tmp_path: Path, source: Pat
         12.0,
         30.0,
         42.0,
-        BoxOrigin.INFERRED,
+        AnnotationOrigin.INFERRED,
         inference_provider="stub-detector/v1",
         confidence=0.8,
     )
@@ -220,7 +251,7 @@ def test_inference_does_not_overwrite_intentionally_empty_frame(
         12.0,
         30.0,
         42.0,
-        BoxOrigin.INFERRED,
+        AnnotationOrigin.INFERRED,
         inference_provider="stub-detector/v1",
         confidence=0.8,
     )
@@ -229,6 +260,35 @@ def test_inference_does_not_overwrite_intentionally_empty_frame(
     assert project.get_boxes(0) == ()
     assert project.get_frame(0).state is ReviewState.REVIEWED
     project.close()
+
+
+def test_inference_from_another_connection_does_not_overwrite_started_work(
+    tmp_path: Path, source: Path
+) -> None:
+    project_path = tmp_path / "labels.sqlite3"
+    editor = AnnotationProject.create(project_path, source, class_names=["person"])
+    editor.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
+    worker = AnnotationProject.open(project_path, source)
+    editor.replace_boxes(
+        0,
+        [Box("manual-1", 0, 1.0, 2.0, 10.0, 12.0, AnnotationOrigin.MANUAL)],
+    )
+    inferred = Box(
+        "inferred-1",
+        0,
+        10.0,
+        12.0,
+        30.0,
+        42.0,
+        AnnotationOrigin.INFERRED,
+        inference_provider="stub-detector/v1",
+        confidence=0.8,
+    )
+
+    assert worker.seed_inferred_boxes(0, [inferred]) is False
+    assert worker.get_boxes(0)[0].id == "manual-1"
+    worker.close()
+    editor.close()
 
 
 def test_project_persists_inference_provenance(tmp_path: Path, source: Path) -> None:
@@ -242,7 +302,7 @@ def test_project_persists_inference_provenance(tmp_path: Path, source: Path) -> 
         12.0,
         30.0,
         42.0,
-        BoxOrigin.INFERRED,
+        AnnotationOrigin.INFERRED,
         inference_provider="stub-detector/v1",
         confidence=0.8,
     )
@@ -265,16 +325,17 @@ def test_carry_forward_preserves_inference_provenance(tmp_path: Path, source: Pa
         12.0,
         30.0,
         42.0,
-        BoxOrigin.INFERRED,
+        AnnotationOrigin.INFERRED,
         inference_provider="stub-detector/v1",
         confidence=0.8,
     )
     project.seed_inferred_boxes(0, [inferred])
 
-    project.ensure_frame(1, 0.1, 100, 80, previous_index=0)
+    project.ensure_frame(1, 0.1, 100, 80)
+    project.carry_forward_boxes(0, 1)
 
     copied = project.get_boxes(1)[0]
-    assert copied.origin is BoxOrigin.COPIED
+    assert copied.origin is AnnotationOrigin.COPIED
     assert copied.source_box_id == inferred.id
     assert copied.inference_provider == inferred.inference_provider
     assert copied.confidence == inferred.confidence
@@ -287,7 +348,7 @@ def test_open_migrates_v1_boxes_without_losing_annotations(tmp_path: Path, sourc
     project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
     project.replace_boxes(
         0,
-        [Box("manual-1", 0, 10.0, 12.0, 30.0, 42.0, BoxOrigin.MANUAL)],
+        [Box("manual-1", 0, 10.0, 12.0, 30.0, 42.0, AnnotationOrigin.MANUAL)],
     )
     project.close()
     connection = sqlite3.connect(project_path)
@@ -327,7 +388,9 @@ def test_open_migrates_v1_boxes_without_losing_annotations(tmp_path: Path, sourc
 
     migrated = AnnotationProject.open(project_path, source)
 
-    assert migrated.get_boxes(0) == (Box("manual-1", 0, 10.0, 12.0, 30.0, 42.0, BoxOrigin.MANUAL),)
+    assert migrated.get_boxes(0) == (
+        Box("manual-1", 0, 10.0, 12.0, 30.0, 42.0, AnnotationOrigin.MANUAL),
+    )
     migrated.close()
     connection = sqlite3.connect(project_path)
     assert connection.execute(
@@ -347,13 +410,8 @@ def test_forward_navigation_from_reviewed_empty_frame_starts_empty(
     project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
     project.mark_reviewed(0)
 
-    frame = project.ensure_frame(
-        1,
-        timestamp_seconds=0.1,
-        width=100,
-        height=80,
-        previous_index=0,
-    )
+    frame = project.ensure_frame(1, timestamp_seconds=0.1, width=100, height=80)
+    assert project.carry_forward_boxes(0, 1) is False
 
     assert frame.state is ReviewState.UNREVIEWED
     assert project.get_boxes(1) == ()
@@ -365,7 +423,7 @@ def test_mutating_a_reviewed_frame_returns_it_to_draft(tmp_path: Path, source: P
     project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
     project.mark_reviewed(0)
 
-    project.replace_boxes(0, [Box("box-1", 0, 1.0, 2.0, 10.0, 12.0, BoxOrigin.MANUAL)])
+    project.replace_boxes(0, [Box("box-1", 0, 1.0, 2.0, 10.0, 12.0, AnnotationOrigin.MANUAL)])
 
     assert project.get_frame(0).state is ReviewState.DRAFT
     project.close()
@@ -375,8 +433,8 @@ def test_replacing_boxes_preserves_user_visible_order(tmp_path: Path, source: Pa
     project = AnnotationProject.create(tmp_path / "labels.sqlite3", source, class_names=["person"])
     project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
     boxes = (
-        Box("z-box", 0, 1.0, 2.0, 10.0, 12.0, BoxOrigin.MANUAL),
-        Box("a-box", 0, 20.0, 22.0, 30.0, 32.0, BoxOrigin.MANUAL),
+        Box("z-box", 0, 1.0, 2.0, 10.0, 12.0, AnnotationOrigin.MANUAL),
+        Box("a-box", 0, 20.0, 22.0, 30.0, 32.0, AnnotationOrigin.MANUAL),
     )
 
     project.replace_boxes(0, boxes)

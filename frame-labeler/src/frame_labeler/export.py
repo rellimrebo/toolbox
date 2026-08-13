@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from frame_labeler.domain import AnnotationOrigin, Box
 from frame_labeler.media import MediaSource
 from frame_labeler.project import AnnotationProject, ProjectError
 
@@ -13,6 +15,51 @@ from frame_labeler.project import AnnotationProject, ProjectError
 class ExportSummary:
     exported: int
     failed: int = 0
+
+
+ExportFunction = Callable[[AnnotationProject, MediaSource, str | Path], ExportSummary]
+
+
+def box_to_yolo(
+    box: Box, image_width: int, image_height: int
+) -> tuple[int, float, float, float, float]:
+    if image_width <= 0 or image_height <= 0:
+        raise ValueError("Image dimensions must be greater than zero")
+    width = box.x_max - box.x_min
+    height = box.y_max - box.y_min
+    return (
+        box.class_id,
+        (box.x_min + width / 2.0) / image_width,
+        (box.y_min + height / 2.0) / image_height,
+        width / image_width,
+        height / image_height,
+    )
+
+
+def box_from_yolo(
+    box_id: str,
+    class_id: int,
+    center_x: float,
+    center_y: float,
+    width: float,
+    height: float,
+    image_width: int,
+    image_height: int,
+    origin: AnnotationOrigin = AnnotationOrigin.MANUAL,
+) -> Box:
+    pixel_width = width * image_width
+    pixel_height = height * image_height
+    pixel_center_x = center_x * image_width
+    pixel_center_y = center_y * image_height
+    return Box(
+        box_id,
+        class_id,
+        pixel_center_x - pixel_width / 2.0,
+        pixel_center_y - pixel_height / 2.0,
+        pixel_center_x + pixel_width / 2.0,
+        pixel_center_y + pixel_height / 2.0,
+        origin,
+    )
 
 
 def _safe_name(value: str) -> str:
@@ -76,8 +123,8 @@ def export_yolo(
             label_path = label_dir / f"{Path(filename).stem}.txt"
             lines = []
             for box in boxes:
-                class_id, center_x, center_y, width, height = box.to_yolo(
-                    frame_record.width, frame_record.height
+                class_id, center_x, center_y, width, height = box_to_yolo(
+                    box, frame_record.width, frame_record.height
                 )
                 lines.append(f"{class_id} {center_x:.8f} {center_y:.8f} {width:.8f} {height:.8f}")
             label_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -116,3 +163,26 @@ def export_yolo(
         encoding="utf-8",
     )
     return ExportSummary(exported=len(manifest))
+
+
+_EXPORTERS: dict[str, ExportFunction] = {"yolo": export_yolo}
+
+
+def available_export_formats() -> tuple[str, ...]:
+    return tuple(sorted(_EXPORTERS))
+
+
+def get_exporter(format_name: str) -> ExportFunction:
+    try:
+        return _EXPORTERS[format_name]
+    except KeyError as error:
+        raise ValueError(f"Unsupported export format: {format_name}") from error
+
+
+def export_dataset(
+    format_name: str,
+    project: AnnotationProject,
+    media: MediaSource,
+    output_path: str | Path,
+) -> ExportSummary:
+    return get_exporter(format_name)(project, media, output_path)

@@ -47,7 +47,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from frame_labeler.domain import Box, BoxOrigin, ReviewState
+from frame_labeler.domain import AnnotationOrigin, Box, ReviewState
 from frame_labeler.export import export_yolo
 from frame_labeler.media import MediaFrame, MediaSource
 from frame_labeler.project import AnnotationProject
@@ -252,7 +252,7 @@ class AnnotationItem(QGraphicsRectItem):
         color = _class_color(self.box.class_id)
         pen = QPen(color, 2.0)
         pen.setCosmetic(True)
-        if self.is_draft and self.box.origin is BoxOrigin.COPIED:
+        if self.is_draft and self.box.origin is AnnotationOrigin.COPIED:
             pen.setStyle(Qt.PenStyle.DashLine)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -671,8 +671,9 @@ class LabelerWindow(QMainWindow):
             media_frame.timestamp_seconds,
             media_frame.width,
             media_frame.height,
-            previous_index=previous_index,
         )
+        if previous_index is not None and self.project.carry_forward_boxes(previous_index, index):
+            frame = self.project.get_frame(index)
         self.current_frame_index = index
         self.project.last_frame_index = index
         if self._current_media_frame is not None:
@@ -721,7 +722,7 @@ class LabelerWindow(QMainWindow):
             str(uuid.uuid4()),
             self._class_combo.currentIndex(),
             *coordinates,
-            BoxOrigin.MANUAL,
+            AnnotationOrigin.MANUAL,
         )
         boxes = (*self.project.get_boxes(self.current_frame_index), box)
         self.project.replace_boxes(self.current_frame_index, boxes)

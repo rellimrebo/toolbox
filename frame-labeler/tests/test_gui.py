@@ -8,7 +8,7 @@ from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QImage, QWheelEvent
 from PySide6.QtWidgets import QToolBar
 
-from frame_labeler.domain import Box, BoxOrigin, ReviewState
+from frame_labeler.domain import AnnotationOrigin, Box, ReviewState
 from frame_labeler.gui import AnnotationCanvas, LabelerWindow
 from frame_labeler.media import MediaFrame, open_media
 from frame_labeler.project import AnnotationProject
@@ -70,7 +70,7 @@ def test_selected_box_handles_stay_inside_repaint_bounds(qtbot) -> None:  # type
     qtbot.addWidget(canvas)
     canvas.set_frame(
         QImage(100, 80, QImage.Format.Format_RGB888),
-        [Box("box-1", 0, 10.0, 12.0, 50.0, 60.0, BoxOrigin.MANUAL)],
+        [Box("box-1", 0, 10.0, 12.0, 50.0, 60.0, AnnotationOrigin.MANUAL)],
         ("object",),
     )
 
@@ -95,7 +95,7 @@ def test_box_label_is_included_in_item_repaint_bounds(qtbot) -> None:  # type: i
     qtbot.addWidget(canvas)
     canvas.set_frame(
         QImage(100, 80, QImage.Format.Format_RGB888),
-        [Box("box-1", 0, 10.0, 12.0, 14.0, 60.0, BoxOrigin.MANUAL)],
+        [Box("box-1", 0, 10.0, 12.0, 14.0, 60.0, AnnotationOrigin.MANUAL)],
         ("long-class-name",),
     )
 
@@ -139,7 +139,7 @@ def test_next_frame_carries_draft_boxes_without_review(qtbot, tmp_path: Path) ->
     assert window.current_frame_index == 1
     copied_box = window.canvas.boxes()[0]
     assert copied_box.coordinates == (10.0, 12.0, 30.0, 42.0)
-    assert copied_box.origin is BoxOrigin.COPIED
+    assert copied_box.origin is AnnotationOrigin.COPIED
     assert project.get_frame(1).state is ReviewState.DRAFT
     window.close()
 
@@ -182,7 +182,7 @@ def test_selecting_reviewed_box_does_not_change_review_state(qtbot, tmp_path: Pa
         tmp_path / "labels.sqlite3", source_path, class_names=["object"]
     )
     project.ensure_frame(0, timestamp_seconds=0.0, width=100, height=80)
-    project.replace_boxes(0, [Box("box-1", 0, 10.0, 10.0, 40.0, 40.0, BoxOrigin.MANUAL)])
+    project.replace_boxes(0, [Box("box-1", 0, 10.0, 10.0, 40.0, 40.0, AnnotationOrigin.MANUAL)])
     project.mark_reviewed(0)
     media = open_media(source_path)
     window = LabelerWindow(project, media)
@@ -198,8 +198,8 @@ def test_selecting_reviewed_box_does_not_change_review_state(qtbot, tmp_path: Pa
 
 def test_box_list_selects_overlapping_box_by_stable_order(qtbot, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     boxes = [
-        Box("z-box", 0, 10.0, 10.0, 60.0, 60.0, BoxOrigin.MANUAL),
-        Box("a-box", 1, 20.0, 20.0, 70.0, 70.0, BoxOrigin.MANUAL),
+        Box("z-box", 0, 10.0, 10.0, 60.0, 60.0, AnnotationOrigin.MANUAL),
+        Box("a-box", 1, 20.0, 20.0, 70.0, 70.0, AnnotationOrigin.MANUAL),
     ]
     window, _project = _create_window_with_boxes(qtbot, tmp_path, boxes)
 
@@ -214,8 +214,8 @@ def test_box_list_selects_overlapping_box_by_stable_order(qtbot, tmp_path: Path)
 
 def test_box_selection_cycles_and_wraps(qtbot, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     boxes = [
-        Box("box-1", 0, 10.0, 10.0, 30.0, 30.0, BoxOrigin.MANUAL),
-        Box("box-2", 1, 20.0, 20.0, 40.0, 40.0, BoxOrigin.MANUAL),
+        Box("box-1", 0, 10.0, 10.0, 30.0, 30.0, AnnotationOrigin.MANUAL),
+        Box("box-2", 1, 20.0, 20.0, 40.0, 40.0, AnnotationOrigin.MANUAL),
     ]
     window, _project = _create_window_with_boxes(qtbot, tmp_path, boxes)
 
@@ -233,7 +233,7 @@ def test_box_selection_cycles_and_wraps(qtbot, tmp_path: Path) -> None:  # type:
 
 
 def test_nudging_selected_box_updates_persistent_source_coordinates(qtbot, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
-    box = Box("box-1", 0, 10.0, 12.0, 30.0, 42.0, BoxOrigin.MANUAL)
+    box = Box("box-1", 0, 10.0, 12.0, 30.0, 42.0, AnnotationOrigin.MANUAL)
     window, project = _create_window_with_boxes(qtbot, tmp_path, [box])
     window.box_list.setCurrentRow(0)
 
@@ -245,7 +245,7 @@ def test_nudging_selected_box_updates_persistent_source_coordinates(qtbot, tmp_p
 
 
 def test_vim_style_shortcuts_nudge_by_one_and_ten_pixels(qtbot, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
-    box = Box("box-1", 0, 20.0, 20.0, 40.0, 40.0, BoxOrigin.MANUAL)
+    box = Box("box-1", 0, 20.0, 20.0, 40.0, 40.0, AnnotationOrigin.MANUAL)
     window, project = _create_window_with_boxes(qtbot, tmp_path, [box])
     window.box_list.setCurrentRow(0)
 
@@ -258,7 +258,7 @@ def test_vim_style_shortcuts_nudge_by_one_and_ten_pixels(qtbot, tmp_path: Path) 
 
 
 def test_right_drag_pans_without_changing_boxes(qtbot) -> None:  # type: ignore[no-untyped-def]
-    box = Box("box-1", 0, 100.0, 100.0, 200.0, 200.0, BoxOrigin.MANUAL)
+    box = Box("box-1", 0, 100.0, 100.0, 200.0, 200.0, AnnotationOrigin.MANUAL)
     canvas = AnnotationCanvas()
     qtbot.addWidget(canvas)
     canvas.resize(320, 240)
@@ -283,7 +283,7 @@ def test_right_drag_pans_without_changing_boxes(qtbot) -> None:  # type: ignore[
 
 
 def test_left_drag_moves_box_in_source_pixels_while_zoomed(qtbot) -> None:  # type: ignore[no-untyped-def]
-    box = Box("box-1", 0, 400.0, 300.0, 500.0, 400.0, BoxOrigin.MANUAL)
+    box = Box("box-1", 0, 400.0, 300.0, 500.0, 400.0, AnnotationOrigin.MANUAL)
     canvas = AnnotationCanvas()
     qtbot.addWidget(canvas)
     canvas.resize(500, 400)
@@ -302,7 +302,7 @@ def test_left_drag_moves_box_in_source_pixels_while_zoomed(qtbot) -> None:  # ty
 
 
 def test_edge_handle_resizes_box_at_zoom(qtbot) -> None:  # type: ignore[no-untyped-def]
-    box = Box("box-1", 0, 400.0, 300.0, 500.0, 400.0, BoxOrigin.MANUAL)
+    box = Box("box-1", 0, 400.0, 300.0, 500.0, 400.0, AnnotationOrigin.MANUAL)
     canvas = AnnotationCanvas()
     qtbot.addWidget(canvas)
     canvas.resize(500, 400)
