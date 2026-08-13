@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from frame_labeler import __version__
-from frame_labeler.export import export_yolo
+from frame_labeler.export import available_export_formats, export_dataset
 from frame_labeler.media import open_media
 from frame_labeler.project import AnnotationProject
 
@@ -31,7 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     export_command = commands.add_parser("export", help="Export reviewed annotations")
     export_command.add_argument("project")
-    export_command.add_argument("--format", choices=("yolo",), default="yolo")
+    export_command.add_argument("--format", choices=available_export_formats(), default="yolo")
     export_command.add_argument("--output", required=True)
     return parser
 
@@ -63,7 +63,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             with AnnotationProject.open(args.project) as project:
                 media = open_media(project.source_path)
                 try:
-                    summary = export_yolo(project, media, args.output)
+                    summary = export_dataset(args.format, project, media, args.output)
                 finally:
                     media.close()
             print(f"Exported {summary.exported} reviewed frame(s) to {args.output}")

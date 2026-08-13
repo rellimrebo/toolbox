@@ -9,9 +9,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from frame_labeler.domain import Box, BoxOrigin, FrameRecord, ReviewState
+from frame_labeler.domain import AnnotationOrigin, Box, FrameRecord, ReviewState
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class ProjectError(RuntimeError):
@@ -51,6 +51,37 @@ def _validate_classes(class_names: Sequence[str]) -> tuple[str, ...]:
     if len(set(cleaned)) != len(cleaned):
         raise ValueError("Class names must be unique")
     return cleaned
+
+
+def _create_boxes_table(connection: sqlite3.Connection, table_name: str) -> None:
+    if table_name not in {"boxes", "boxes_v2"}:
+        raise ValueError(f"Unexpected boxes table name: {table_name}")
+    connection.execute(
+        f"""
+        CREATE TABLE {table_name} (
+            id TEXT PRIMARY KEY,
+            frame_index INTEGER NOT NULL REFERENCES frames(source_index) ON DELETE CASCADE,
+            class_id INTEGER NOT NULL REFERENCES classes(id),
+            x_min REAL NOT NULL,
+            y_min REAL NOT NULL,
+            x_max REAL NOT NULL,
+            y_max REAL NOT NULL,
+            origin TEXT NOT NULL CHECK (origin IN ('manual', 'copied', 'inferred')),
+            source_box_id TEXT,
+            inference_provider TEXT,
+            confidence REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK (x_max > x_min),
+            CHECK (y_max > y_min),
+            CHECK (origin != 'inferred' OR inference_provider IS NOT NULL),
+            CHECK (
+                origin != 'manual'
+                OR (inference_provider IS NULL AND confidence IS NULL)
+            )
+        )
+        """
+    )
 
 
 class AnnotationProject:
@@ -119,7 +150,7 @@ class AnnotationProject:
         project = cls(path, connection)
         try:
             version = int(project._metadata("schema_version"))
-            if version != SCHEMA_VERSION:
+            if version not in {1, SCHEMA_VERSION}:
                 raise ProjectError(f"Unsupported project schema version: {version}")
             recorded = json.loads(project._metadata("source_identity"))
             source = Path(source_path) if source_path is not None else Path(recorded["path"])
@@ -127,6 +158,8 @@ class AnnotationProject:
                 raise SourceMismatchError(
                     "The project source does not match the current media file"
                 )
+            if version == 1:
+                project._migrate_v1_to_v2()
             return project
         except Exception:
             project.close()
@@ -154,24 +187,38 @@ class AnnotationProject:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
-            CREATE TABLE boxes (
-                id TEXT PRIMARY KEY,
-                frame_index INTEGER NOT NULL REFERENCES frames(source_index) ON DELETE CASCADE,
-                class_id INTEGER NOT NULL REFERENCES classes(id),
-                x_min REAL NOT NULL,
-                y_min REAL NOT NULL,
-                x_max REAL NOT NULL,
-                y_max REAL NOT NULL,
-                origin TEXT NOT NULL CHECK (origin IN ('manual', 'copied')),
-                source_box_id TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                CHECK (x_max > x_min),
-                CHECK (y_max > y_min)
-            );
-            CREATE INDEX boxes_frame_index ON boxes(frame_index);
             """
         )
+        _create_boxes_table(self._connection, "boxes")
+        self._connection.execute("CREATE INDEX boxes_frame_index ON boxes(frame_index)")
+
+    def _migrate_v1_to_v2(self) -> None:
+        now = _utc_now()
+        with self._connection:
+            _create_boxes_table(self._connection, "boxes_v2")
+            self._connection.execute(
+                """
+                INSERT INTO boxes_v2(
+                    id, frame_index, class_id, x_min, y_min, x_max, y_max,
+                    origin, source_box_id, inference_provider, confidence,
+                    created_at, updated_at
+                )
+                SELECT
+                    id, frame_index, class_id, x_min, y_min, x_max, y_max,
+                    origin, source_box_id, NULL, NULL, created_at, updated_at
+                FROM boxes
+                """
+            )
+            self._connection.execute("DROP TABLE boxes")
+            self._connection.execute("ALTER TABLE boxes_v2 RENAME TO boxes")
+            self._connection.execute("CREATE INDEX boxes_frame_index ON boxes(frame_index)")
+            self._connection.execute(
+                "UPDATE metadata SET value = ? WHERE key = 'schema_version'",
+                (str(SCHEMA_VERSION),),
+            )
+            self._connection.execute(
+                "UPDATE metadata SET value = ? WHERE key = 'updated_at'", (now,)
+            )
 
     def _metadata(self, key: str) -> str:
         row = self._connection.execute(
@@ -229,7 +276,6 @@ class AnnotationProject:
         timestamp_seconds: float,
         width: int,
         height: int,
-        previous_index: int | None = None,
     ) -> FrameRecord:
         if index < 0 or timestamp_seconds < 0 or width <= 0 or height <= 0:
             raise ValueError("Invalid frame metadata")
@@ -240,28 +286,8 @@ class AnnotationProject:
             frame = self._frame_from_row(existing)
             if (frame.width, frame.height) != (width, height):
                 raise ProjectError("Stored frame dimensions do not match decoded media")
-            if (
-                previous_index is not None
-                and frame.state is ReviewState.UNREVIEWED
-                and not self.get_boxes(index)
-            ):
-                boxes_to_carry = self.get_boxes(previous_index)
-                if boxes_to_carry:
-                    now = _utc_now()
-                    with self._connection:
-                        self._insert_copied_boxes(index, boxes_to_carry, now)
-                        self._connection.execute(
-                            "UPDATE frames SET state = ?, updated_at = ? WHERE source_index = ?",
-                            (ReviewState.DRAFT.value, now, index),
-                        )
-                    return self.get_frame(index)
             return frame
 
-        previous_boxes: tuple[Box, ...] = ()
-        if previous_index is not None:
-            previous_boxes = self.get_boxes(previous_index)
-
-        state = ReviewState.DRAFT if previous_boxes else ReviewState.UNREVIEWED
         now = _utc_now()
         with self._connection:
             self._connection.execute(
@@ -271,10 +297,52 @@ class AnnotationProject:
                     reviewed_at, created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
                 """,
-                (index, timestamp_seconds, width, height, state.value, now, now),
+                (
+                    index,
+                    timestamp_seconds,
+                    width,
+                    height,
+                    ReviewState.UNREVIEWED.value,
+                    now,
+                    now,
+                ),
             )
-            self._insert_copied_boxes(index, previous_boxes, now)
         return self.get_frame(index)
+
+    def carry_forward_boxes(self, source_frame_index: int, target_frame_index: int) -> bool:
+        if target_frame_index - source_frame_index != self.stride:
+            raise ValueError("Box carry-forward requires consecutive sampled frames")
+        self.get_frame(source_frame_index)
+        self.get_frame(target_frame_index)
+        now = _utc_now()
+        with self._connection:
+            claimed = self._connection.execute(
+                """
+                UPDATE frames
+                SET state = ?, reviewed_at = NULL, updated_at = ?
+                WHERE source_index = ?
+                  AND state = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM boxes WHERE frame_index = ?
+                  )
+                  AND EXISTS (
+                      SELECT 1 FROM boxes WHERE frame_index = ?
+                  )
+                """,
+                (
+                    ReviewState.DRAFT.value,
+                    now,
+                    target_frame_index,
+                    ReviewState.UNREVIEWED.value,
+                    target_frame_index,
+                    source_frame_index,
+                ),
+            )
+            if claimed.rowcount != 1:
+                return False
+            source_boxes = self.get_boxes(source_frame_index)
+            self._insert_copied_boxes(target_frame_index, source_boxes, now)
+        return True
 
     def _insert_copied_boxes(self, frame_index: int, boxes: Sequence[Box], now: str) -> None:
         for box in boxes:
@@ -282,8 +350,10 @@ class AnnotationProject:
                 str(uuid.uuid4()),
                 box.class_id,
                 *box.coordinates,
-                BoxOrigin.COPIED,
+                AnnotationOrigin.COPIED,
                 source_box_id=box.id,
+                inference_provider=box.inference_provider,
+                confidence=box.confidence,
             )
             self._insert_box(frame_index, copied, now)
 
@@ -327,26 +397,28 @@ class AnnotationProject:
                 y_min=float(row["y_min"]),
                 x_max=float(row["x_max"]),
                 y_max=float(row["y_max"]),
-                origin=BoxOrigin(str(row["origin"])),
+                origin=AnnotationOrigin(str(row["origin"])),
                 source_box_id=(
                     str(row["source_box_id"]) if row["source_box_id"] is not None else None
                 ),
+                inference_provider=(
+                    str(row["inference_provider"])
+                    if row["inference_provider"] is not None
+                    else None
+                ),
+                confidence=(float(row["confidence"]) if row["confidence"] is not None else None),
             )
             for row in rows
         )
 
     def replace_boxes(self, frame_index: int, boxes: Sequence[Box]) -> None:
         frame = self.get_frame(frame_index)
-        class_count = len(self.class_names)
-        for box in boxes:
-            if box.class_id >= class_count:
-                raise ValueError(f"Unknown class ID: {box.class_id}")
-            box.clipped(frame.width, frame.height)
+        prepared = self._prepare_boxes(frame, boxes)
         now = _utc_now()
         with self._connection:
             self._connection.execute("DELETE FROM boxes WHERE frame_index = ?", (frame_index,))
-            for box in boxes:
-                self._insert_box(frame_index, box.clipped(frame.width, frame.height), now)
+            for box in prepared:
+                self._insert_box(frame_index, box, now)
             self._connection.execute(
                 """
                 UPDATE frames
@@ -356,13 +428,56 @@ class AnnotationProject:
                 (ReviewState.DRAFT.value, now, frame_index),
             )
 
+    def _prepare_boxes(self, frame: FrameRecord, boxes: Sequence[Box]) -> tuple[Box, ...]:
+        class_count = len(self.class_names)
+        prepared: list[Box] = []
+        for box in boxes:
+            if box.class_id >= class_count:
+                raise ValueError(f"Unknown class ID: {box.class_id}")
+            prepared.append(box.clipped(frame.width, frame.height))
+        return tuple(prepared)
+
+    def seed_inferred_boxes(self, frame_index: int, boxes: Sequence[Box]) -> bool:
+        if not boxes:
+            return False
+        if any(box.origin is not AnnotationOrigin.INFERRED for box in boxes):
+            raise ValueError("Inference seeding accepts only inferred boxes")
+        frame = self.get_frame(frame_index)
+        prepared = self._prepare_boxes(frame, boxes)
+        now = _utc_now()
+        with self._connection:
+            claimed = self._connection.execute(
+                """
+                UPDATE frames
+                SET state = ?, reviewed_at = NULL, updated_at = ?
+                WHERE source_index = ?
+                  AND state = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM boxes WHERE frame_index = ?
+                  )
+                """,
+                (
+                    ReviewState.DRAFT.value,
+                    now,
+                    frame_index,
+                    ReviewState.UNREVIEWED.value,
+                    frame_index,
+                ),
+            )
+            if claimed.rowcount != 1:
+                return False
+            for box in prepared:
+                self._insert_box(frame_index, box, now)
+        return True
+
     def _insert_box(self, frame_index: int, box: Box, now: str) -> None:
         self._connection.execute(
             """
             INSERT INTO boxes(
                 id, frame_index, class_id, x_min, y_min, x_max, y_max,
-                origin, source_box_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                origin, source_box_id, inference_provider, confidence,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 box.id,
@@ -371,6 +486,8 @@ class AnnotationProject:
                 *box.coordinates,
                 box.origin.value,
                 box.source_box_id,
+                box.inference_provider,
+                box.confidence,
                 now,
                 now,
             ),
